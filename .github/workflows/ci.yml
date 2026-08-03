@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.12", "3.13", "3.14"]
+        include:
+          # The project is developed on Windows, so prove it still runs there.
+          - os: windows-latest
+            python-version: "3.13"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check SQLite has FTS5
+        # Search is built on FTS5; without it the failures are cryptic SQL errors.
+        run: >
+          python -c "import sqlite3;
+          sqlite3.connect(':memory:').execute('CREATE VIRTUAL TABLE t USING fts5(x)');
+          print('FTS5 available, SQLite', sqlite3.sqlite_version)"
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -t .
+
+  smoke:
+    name: Boot the real app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Seed a database and serve every main page
+        # The test suite injects a config; this exercises the untested path where
+        # create_app() builds its own instance folder and generates a secret key.
+        run: |
+          python - <<'PY'
+          from shop import create_app
+          from shop.db import check_schema, init_db
+          from shop.seed import seed_database
+
+          app = create_app()
+          with app.app_context():
+              init_db()
+              seed_database()
+              check_schema()
+
+          client = app.test_client()
+          pages = [
+              ("/", 200),
+              ("/c/electronics", 200),
+              ("/p/1", 200),
+              ("/s/kiln-and-clay", 200),
+              ("/cart/", 200),
+              ("/sell", 302),           # sign-in required
+              ("/orders/lookup", 200),
+              ("/auth/login", 200),
+              ("/auth/forgot", 200),
+              ("/admin/", 302),         # sign-in required
+              ("/nope", 404),
+          ]
+          for path, expected in pages:
+              status = client.get(path).status_code
+              print(f"{status}  {path}")
+              assert status == expected, f"{path} returned {status}, expected {expected}"
+          print(f"\n{len(pages)} pages served as expected.")
+          PY

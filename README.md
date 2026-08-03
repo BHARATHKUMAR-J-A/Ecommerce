@@ -1,5 +1,7 @@
 # ShopSphere
 
+[![CI](https://github.com/yongjunmun/ShopSphere/actions/workflows/ci.yml/badge.svg)](https://github.com/yongjunmun/ShopSphere/actions/workflows/ci.yml)
+
 A complete e-commerce marketplace: browse a catalogue across 10 categories, search
 and filter it, fill a cart, check out, and manage stock from an admin area.
 Independent sellers can apply, list their own products with photos, and the
@@ -39,6 +41,10 @@ python -m unittest discover -s tests -t .
 order fulfilment, reviews, password reset, seller onboarding, image uploads,
 commission accounting and the security controls listed below. It takes about two
 minutes — most of that is scrypt deliberately being slow.
+
+CI runs the whole suite on every push against Python 3.12, 3.13 and 3.14 on Linux
+and 3.13 on Windows, plus a smoke job that boots the real app and serves every
+main page. The badge above is the honest answer to whether those tests pass.
 
 If you already have a database from an older version, the app will refuse to start
 and tell you so. Delete `instance/shop.sqlite` (or run `flask --app shop init-db`)

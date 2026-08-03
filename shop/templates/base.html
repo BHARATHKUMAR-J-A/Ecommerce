@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ store_name }}{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="topbar__promo">Free delivery on orders over $50 &middot; 30-day returns</div>
+  <div class="topbar__main shell">
+    <a class="brand" href="{{ url_for('catalog.index') }}">
+      <span class="brand__mark" aria-hidden="true">&#9679;</span>
+      <span class="brand__text">{{ store_name }}</span>
+    </a>
+
+    <form class="search" action="{{ url_for('catalog.index') }}" method="get" role="search">
+      <label class="sr-only" for="q">Search products</label>
+      <input id="q" type="search" name="q" placeholder="Search 60+ products&hellip;"
+             value="{{ query|default('', true) }}" maxlength="80" autocomplete="off">
+      <button type="submit">Search</button>
+    </form>
+
+    <nav class="topbar__links" aria-label="Account">
+      {% if g.user %}
+        <a href="{{ url_for('orders.history') }}">Orders</a>
+        {% if seller_account and seller_account.status == 'approved' %}
+          <a href="{{ url_for('sellers.dashboard') }}">My shop</a>
+        {% else %}
+          <a href="{{ url_for('sellers.apply') }}">Sell</a>
+        {% endif %}
+        {% if g.user.is_admin %}<a href="{{ url_for('admin.dashboard') }}">Admin</a>{% endif %}
+        <form action="{{ url_for('auth.logout') }}" method="post" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="linklike">Sign out</button>
+        </form>
+      {% else %}
+        <a href="{{ url_for('sellers.apply') }}">Sell</a>
+        <a href="{{ url_for('auth.login') }}">Sign in</a>
+        <a class="btn btn--ghost" href="{{ url_for('auth.register') }}">Create account</a>
+      {% endif %}
+      <a class="cart-link" href="{{ url_for('cart.view') }}">
+        Cart
+        {% if cart_count %}<span class="badge">{{ cart_count }}</span>{% endif %}
+      </a>
+    </nav>
+  </div>
+
+  <nav class="catbar" aria-label="Categories">
+    <div class="shell catbar__inner">
+      <a href="{{ url_for('catalog.index') }}"
+         class="catbar__item {% if not category %}is-active{% endif %}">All</a>
+      {% for c in nav_categories %}
+        <a href="{{ url_for('catalog.category', slug=c.slug) }}"
+           class="catbar__item {% if category and category.slug == c.slug %}is-active{% endif %}">
+          <span aria-hidden="true">{{ c.icon }}</span> {{ c.name }}
+        </a>
+      {% endfor %}
+    </div>
+  </nav>
+</header>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="shell flashes" role="status">
+      {% for kind, message in messages %}
+        <p class="flash flash--{{ kind }}">{{ message }}</p>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+
+<main id="main" class="shell">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="footer">
+  <div class="shell footer__inner">
+    <div>
+      <strong>{{ store_name }}</strong>
+      <p>{{ store_tagline }}</p>
+    </div>
+    <div>
+      <strong>Shop</strong>
+      <ul>
+        {% for c in nav_categories[:5] %}
+          <li><a href="{{ url_for('catalog.category', slug=c.slug) }}">{{ c.name }}</a></li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div>
+      <strong>Help</strong>
+      <ul>
+        <li><a href="{{ url_for('cart.view') }}">Your cart</a></li>
+        <li><a href="{{ url_for('orders.lookup') }}">Track an order</a></li>
+        <li><a href="{{ url_for('sellers.apply') }}">Sell on {{ store_name }}</a></li>
+        <li><a href="{{ url_for('catalog.index', instock=1) }}">In stock now</a></li>
+      </ul>
+    </div>
+  </div>
+  <p class="footer__legal">Demo storefront &mdash; no real payments are taken.</p>
+</footer>
+
+<script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</body>
+</html>

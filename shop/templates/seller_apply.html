@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Sell on {{ store_name }}{% endblock %}
+
+{% block content %}
+<section class="authbox authbox--wide">
+  <h1>Sell on {{ store_name }}</h1>
+  <p class="muted">
+    List your own products, upload photos and manage your own stock. We handle the
+    storefront, cart, checkout and order tracking.
+  </p>
+
+  <div class="terms">
+    <p><strong>Our fee is {{ (rate * 100)|round(0, 'floor')|int }}% of each sale.</strong>
+      You keep the remaining {{ (100 - rate * 100)|round(0, 'floor')|int }}%. The fee is
+      calculated per line, and cancelled orders are not charged.</p>
+    <p class="small muted">
+      Applications are reviewed by hand. Your listings go live as soon as you are approved.
+    </p>
+  </div>
+
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label for="shop_name">Shop name</label>
+    <input id="shop_name" name="shop_name" value="{{ form.shop_name }}"
+           maxlength="80" required autofocus>
+
+    <label for="contact_email">Contact email</label>
+    <input id="contact_email" name="contact_email" type="email"
+           value="{{ form.contact_email }}" maxlength="120" required>
+
+    <label for="bio">What do you sell?</label>
+    <textarea id="bio" name="bio" rows="4" maxlength="1000">{{ form.bio }}</textarea>
+
+    <label for="payout_reference">Payout reference</label>
+    <input id="payout_reference" name="payout_reference"
+           value="{{ form.payout_reference }}" maxlength="80"
+           placeholder="Bank reference or PayNow number">
+    <p class="hint">Demo only &mdash; no payouts are actually made. Do not enter real details.</p>
+
+    <button type="submit" class="btn btn--primary btn--lg btn--block">Apply to sell</button>
+  </form>
+</section>
+{% endblock %}

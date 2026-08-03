@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Your sales &middot; {{ seller.shop_name }}{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>Your sales</h1>
+  <a href="{{ url_for('sellers.dashboard') }}">&larr; Dashboard</a>
+</div>
+
+{% if rows %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Order</th>
+          <th scope="col">Placed</th>
+          <th scope="col">Item</th>
+          <th scope="col">Ship to</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="right">Line total</th>
+          <th scope="col" class="right">Commission</th>
+          <th scope="col" class="right">You earn</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr class="{{ 'is-dim' if row.status == 'cancelled' else '' }}">
+            <td class="nowrap"><code>{{ row.reference }}</code></td>
+            <td class="nowrap">{{ row.created_at }}</td>
+            <td>{{ row.quantity }} &times; {{ row.name }}</td>
+            <td>{{ row.ship_city }}, {{ row.ship_country }}</td>
+            <td><span class="pill">{{ row.status }}</span></td>
+            <td class="right">{{ row.line_cents|money }}</td>
+            <td class="right">{{ row.commission_cents|money }}</td>
+            <td class="right"><strong>{{ row.seller_earning_cents|money }}</strong></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted small">
+    Cancelled lines are shown greyed out and are excluded from your earnings total.
+    Buyer addresses are shown so you can post the item; nothing else about the buyer
+    is shared with you.
+  </p>
+{% else %}
+  <p class="empty">No sales yet.</p>
+{% endif %}
+{% endblock %}

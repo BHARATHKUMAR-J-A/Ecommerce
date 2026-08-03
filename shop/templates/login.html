@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Sign in &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<section class="authbox">
+  <h1>Sign in</h1>
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" value="{{ email }}"
+           maxlength="120" required autocomplete="email" autofocus>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" required autocomplete="current-password">
+
+    <button type="submit" class="btn btn--primary btn--lg btn--block">Sign in</button>
+  </form>
+
+  <p class="muted">
+    No account yet? <a href="{{ url_for('auth.register') }}">Create one</a>.
+    Forgotten your password?
+    <a href="{{ url_for('auth.forgot_password') }}">Reset it</a>.
+  </p>
+  <p class="muted small demo-note">
+    Demo logins &mdash; shopper <code>demo@shopsphere.test</code> / <code>Demo#12345</code>,
+    admin <code>admin@shopsphere.test</code> / <code>Admin#12345</code>.
+  </p>
+</section>
+{% endblock %}

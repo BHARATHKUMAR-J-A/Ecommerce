@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Products &middot; Admin{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>Products <span class="muted">({{ products|length }})</span></h1>
+  <div class="adminhead__actions">
+    <a href="{{ url_for('admin.dashboard') }}">&larr; Dashboard</a>
+    <a class="btn btn--primary" href="{{ url_for('admin.create_product') }}">Add product</a>
+  </div>
+</div>
+
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr>
+        <th scope="col"></th>
+        <th scope="col">SKU</th>
+        <th scope="col">Name</th>
+        <th scope="col">Seller</th>
+        <th scope="col">Category</th>
+        <th scope="col" class="right">Price</th>
+        <th scope="col" class="right">Stock</th>
+        <th scope="col">Status</th>
+        <th scope="col"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in products %}
+        <tr class="{{ '' if p.is_active else 'is-dim' }}">
+          <td aria-hidden="true">{{ p.icon }}</td>
+          <td><code>{{ p.sku }}</code></td>
+          <td><a href="{{ url_for('catalog.product', product_id=p.id) }}">{{ p.name }}</a></td>
+          <td>
+            {% if p.shop_name %}
+              <a href="{{ url_for('sellers.storefront', slug=p.seller_slug) }}">{{ p.shop_name }}</a>
+            {% else %}
+              <span class="muted">Own stock</span>
+            {% endif %}
+          </td>
+          <td>{{ p.category_name }}</td>
+          <td class="right">{{ p.price_cents|money }}</td>
+          <td class="right {{ 'danger' if p.stock == 0 else '' }}">{{ p.stock }}</td>
+          <td><span class="pill">{{ 'Live' if p.is_active else 'Hidden' }}</span></td>
+          <td class="right nowrap">
+            {% if not p.seller_id %}
+              <a href="{{ url_for('admin.edit_product', product_id=p.id) }}">Edit</a>
+            {% endif %}
+            <form action="{{ url_for('admin.toggle_product', product_id=p.id) }}"
+                  method="post" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="linklike">{{ 'Hide' if p.is_active else 'Show' }}</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{{ product.name }} &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Breadcrumb">
+  <a href="{{ url_for('catalog.index') }}">Home</a>
+  <span aria-hidden="true">/</span>
+  <a href="{{ url_for('catalog.category', slug=product.category_slug) }}">{{ product.category_name }}</a>
+  <span aria-hidden="true">/</span>
+  <span>{{ product.name }}</span>
+</nav>
+
+<article class="detail" data-cat="{{ product.category_slug }}">
+  <div class="detail__media">
+    {% if images %}
+      <img class="detail__photo" alt="{{ product.name }}"
+           src="{{ url_for('sellers.media', filename=images[0].filename) }}">
+    {% else %}
+      <span class="detail__icon" aria-hidden="true">{{ product.icon }}</span>
+    {% endif %}
+    {% if images|length > 1 %}
+      <div class="thumbs">
+        {% for image in images %}
+          <img class="thumb" loading="lazy" alt="{{ product.name }} photo {{ loop.index }}"
+               src="{{ url_for('sellers.media', filename=image.filename) }}">
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="detail__info">
+    <p class="card__eyebrow">{{ product.category_name }} &middot; {{ product.sku }}</p>
+    <h1>{{ product.name }}</h1>
+    {% if product.shop_name %}
+      <p class="soldby">
+        Sold by
+        <a href="{{ url_for('sellers.storefront', slug=product.seller_slug) }}">{{ product.shop_name }}</a>
+      </p>
+    {% else %}
+      <p class="soldby">Sold by {{ store_name }}</p>
+    {% endif %}
+    <p class="card__rating">
+      <span class="stars" aria-hidden="true">{{ product.rating|stars }}</span>
+      <span class="sr-only">Rated {{ product.rating }} out of 5</span>
+      {% if product.review_count %}
+        {{ '%.1f'|format(product.rating) }} out of 5
+        <a href="#reviews">({{ product.review_count }} review{{ '' if product.review_count == 1 else 's' }})</a>
+      {% else %}
+        <span class="muted">No reviews yet</span>
+      {% endif %}
+    </p>
+    <p class="price price--lg">{{ product.price_cents|money }}</p>
+    <p class="detail__desc">{{ product.description }}</p>
+
+    <p class="stockline">
+      {% if product.stock > 20 %}
+        <span class="dot dot--ok"></span> In stock &mdash; ships within 24 hours
+      {% elif product.stock > 0 %}
+        <span class="dot dot--warn"></span> Low stock &mdash; {{ product.stock }} remaining
+      {% else %}
+        <span class="dot dot--bad"></span> Currently sold out
+      {% endif %}
+    </p>
+
+    {{ ui.add_to_cart(product, url_for('catalog.product', product_id=product.id)) }}
+
+    <ul class="perks">
+      <li>Free delivery on orders over $50</li>
+      <li>30-day no-questions returns</li>
+      <li>Two-year warranty on electronics</li>
+    </ul>
+  </div>
+</article>
+
+{% if related %}
+  <section class="listing">
+    <h2>More in {{ product.category_name }}</h2>
+    <div class="grid">
+      {% for item in related %}{{ ui.product_card(item) }}{% endfor %}
+    </div>
+  </section>
+{% endif %}
+
+<section id="reviews" class="listing">
+  <h2>Customer reviews</h2>
+
+  <div class="cartlayout">
+    <section class="panel">
+      {% if reviews %}
+        <ul class="reviewlist">
+          {% for review in reviews %}
+            <li class="review">
+              <div class="review__head">
+                <span class="stars" aria-hidden="true">{{ review.rating|stars }}</span>
+                <span class="sr-only">{{ review.rating }} out of 5</span>
+                <strong>{{ review.title or 'Review' }}</strong>
+                {% if review.verified %}
+                  <span class="tag tag--verified">Verified purchase</span>
+                {% endif %}
+              </div>
+              <p class="muted small">{{ review.author }} &middot; {{ review.created_at }}</p>
+              {% if review.body %}<p>{{ review.body }}</p>{% endif %}
+              {% if g.user and g.user.is_admin %}
+                <form action="{{ url_for('reviews.delete', product_id=product.id) }}"
+                      method="post" class="inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="review_id" value="{{ review.id }}">
+                  <button type="submit" class="linklike danger small">Remove</button>
+                </form>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">No one has reviewed this yet. Be the first.</p>
+      {% endif %}
+    </section>
+
+    <aside class="summary">
+      {% if product.review_count %}
+        <h2>{{ '%.1f'|format(product.rating) }} out of 5</h2>
+        <p class="stars stars--lg" aria-hidden="true">{{ product.rating|stars }}</p>
+        <p class="muted small">Based on {{ product.review_count }}
+          review{{ '' if product.review_count == 1 else 's' }}.</p>
+        <dl>
+          {% for star, count in breakdown %}
+            <dt>{{ star }} star{{ '' if star == 1 else 's' }}</dt><dd>{{ count }}</dd>
+          {% endfor %}
+        </dl>
+      {% endif %}
+
+      {% if g.user %}
+        <h2>{{ 'Edit your review' if my_review else 'Write a review' }}</h2>
+        <form action="{{ url_for('reviews.submit', product_id=product.id) }}"
+              method="post" class="stack">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+          <label for="rating">Your rating</label>
+          <select id="rating" name="rating" required>
+            {% for star in [5, 4, 3, 2, 1] %}
+              <option value="{{ star }}"
+                {% if my_review and my_review.rating == star %}selected{% endif %}>
+                {{ star }} star{{ '' if star == 1 else 's' }}
+              </option>
+            {% endfor %}
+          </select>
+
+          <label for="title">Headline</label>
+          <input id="title" name="title" maxlength="100"
+                 value="{{ my_review.title if my_review else '' }}">
+
+          <label for="body">Your review</label>
+          <textarea id="body" name="body" rows="4"
+                    maxlength="2000">{{ my_review.body if my_review else '' }}</textarea>
+
+          <button type="submit" class="btn btn--primary btn--block">
+            {{ 'Update review' if my_review else 'Post review' }}
+          </button>
+        </form>
+        {% if my_review %}
+          <form action="{{ url_for('reviews.delete', product_id=product.id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="linklike danger">Delete my review</button>
+          </form>
+        {% endif %}
+      {% else %}
+        <h2>Write a review</h2>
+        <p class="muted">
+          <a href="{{ url_for('auth.login', next=url_for('catalog.product', product_id=product.id)) }}">Sign in</a>
+          to review this product.
+        </p>
+      {% endif %}
+    </aside>
+  </div>
+</section>
+{% endblock %}

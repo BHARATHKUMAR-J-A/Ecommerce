@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<section class="empty errorpage">
+  <p class="errorpage__code">{{ code }}</p>
+  <h1>
+    {% if code == 404 %}We could not find that page
+    {% elif code == 403 %}You do not have access to that
+    {% elif code == 400 %}That request could not be processed
+    {% else %}Something went wrong{% endif %}
+  </h1>
+  <p class="muted">{{ message }}</p>
+  <a class="btn btn--primary" href="{{ url_for('catalog.index') }}">Back to the shop</a>
+</section>
+{% endblock %}

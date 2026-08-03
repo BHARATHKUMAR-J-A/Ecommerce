@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Order {{ order.reference }} &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+{% if placed %}
+  <div class="confirm">
+    <h1>Thank you &mdash; your order is confirmed</h1>
+    <p>
+      A confirmation is on its way to {{ order.email }}. Keep reference
+      <strong>{{ order.reference }}</strong> to track it
+      {% if g.user %}
+        under <a href="{{ url_for('orders.history') }}">your orders</a>.
+      {% else %}
+        at <a href="{{ url_for('orders.lookup') }}">order tracking</a>.
+      {% endif %}
+    </p>
+  </div>
+{% else %}
+  <h1>Order {{ order.reference }}</h1>
+{% endif %}
+
+<div class="cartlayout">
+  <section class="panel">
+    <h2>Items</h2>
+    <ul class="ministack ministack--roomy">
+      {% for item in items %}
+        <li>
+          <span class="line__media" aria-hidden="true">{{ item.icon }}</span>
+          <span>
+            <strong>{{ item.name }}</strong><br>
+            <span class="muted">{{ item.quantity }} &times; {{ item.unit_cents|money }}</span>
+          </span>
+          <strong>{{ item.line_cents|money }}</strong>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <aside class="summary">
+    <h2>Summary</h2>
+    <dl>
+      <dt>Placed</dt><dd>{{ order.created_at }}</dd>
+      <dt>Status</dt><dd class="pill">{{ order.status }}</dd>
+      <dt>Subtotal</dt><dd>{{ order.subtotal_cents|money }}</dd>
+      <dt>Shipping</dt>
+      <dd>{{ 'Free' if order.shipping_cents == 0 else order.shipping_cents|money }}</dd>
+      <dt>Tax</dt><dd>{{ order.tax_cents|money }}</dd>
+    </dl>
+    <p class="summary__total"><span>Total</span> <strong>{{ order.total_cents|money }}</strong></p>
+
+    <h2>Shipping to</h2>
+    <address>
+      {{ order.ship_name }}<br>
+      {{ order.ship_address }}<br>
+      {{ order.ship_city }} {{ order.ship_postcode }}<br>
+      {{ order.ship_country }}
+    </address>
+    {% if g.user %}
+      <a href="{{ url_for('orders.history') }}">&larr; All orders</a>
+    {% else %}
+      <a href="{{ url_for('catalog.index') }}">&larr; Back to the shop</a>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

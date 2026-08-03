@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Your cart &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<h1>Your cart</h1>
+
+{% if summary["items"] %}
+  <div class="cartlayout">
+    <section class="cartlines">
+      {% for item in summary["items"] %}
+        {% set p = item.product %}
+        <div class="line">
+          <a class="line__media" href="{{ url_for('catalog.product', product_id=p.id) }}">
+            <span aria-hidden="true">{{ p.icon }}</span>
+          </a>
+          <div class="line__info">
+            <h2><a href="{{ url_for('catalog.product', product_id=p.id) }}">{{ p.name }}</a></h2>
+            <p class="muted">{{ p.sku }} &middot; {{ p.price_cents|money }} each</p>
+            {% if item.capped %}
+              <p class="muted warn">Reduced to {{ item.quantity }} &mdash; that is all we have left.</p>
+            {% endif %}
+          </div>
+          <form class="line__qty" action="{{ url_for('cart.update', product_id=p.id) }}" method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label class="sr-only" for="line-{{ p.id }}">Quantity for {{ p.name }}</label>
+            <input id="line-{{ p.id }}" class="qty" type="number" name="quantity"
+                   value="{{ item.quantity }}" min="0" max="{{ p.stock }}" data-autosubmit>
+            <button type="submit" class="btn btn--ghost btn--sm">Update</button>
+          </form>
+          <div class="line__total">
+            <strong>{{ item.line_cents|money }}</strong>
+            <form action="{{ url_for('cart.remove', product_id=p.id) }}" method="post">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="linklike danger">Remove</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+
+      <form action="{{ url_for('cart.clear') }}" method="post" class="cartlines__foot">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <a href="{{ url_for('catalog.index') }}">&larr; Continue shopping</a>
+        <button type="submit" class="linklike danger">Empty cart</button>
+      </form>
+    </section>
+
+    <aside class="summary">
+      <h2>Order summary</h2>
+      <dl>
+        <dt>Subtotal ({{ summary["count"] }} item{{ '' if summary["count"] == 1 else 's' }})</dt>
+        <dd>{{ summary["subtotal_cents"]|money }}</dd>
+        <dt>Shipping</dt>
+        <dd>{{ 'Free' if summary["shipping_cents"] == 0 else summary["shipping_cents"]|money }}</dd>
+        <dt>Estimated tax</dt><dd>{{ summary["tax_cents"]|money }}</dd>
+      </dl>
+      {% if summary["free_shipping_gap"] > 0 %}
+        <p class="nudge">Add {{ summary["free_shipping_gap"]|money }} more for free delivery.</p>
+      {% endif %}
+      <p class="summary__total"><span>Total</span> <strong>{{ summary["total_cents"]|money }}</strong></p>
+      <a class="btn btn--primary btn--lg btn--block" href="{{ url_for('orders.checkout') }}">
+        Checkout
+      </a>
+      <p class="muted small">Demo store &mdash; no card details are collected.</p>
+    </aside>
+  </div>
+{% else %}
+  <p class="empty">
+    Your cart is empty.
+    <a href="{{ url_for('catalog.index') }}">Browse the catalogue</a>
+  </p>
+{% endif %}
+{% endblock %}

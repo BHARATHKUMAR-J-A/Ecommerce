@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Your orders &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<h1>Your orders</h1>
+
+{% if orders %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Reference</th>
+          <th scope="col">Placed</th>
+          <th scope="col">Items</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="right">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for order in orders %}
+          <tr>
+            <td><a href="{{ url_for('orders.detail', reference=order.reference) }}">{{ order.reference }}</a></td>
+            <td>{{ order.created_at }}</td>
+            <td>{{ order.units }} unit{{ '' if order.units == 1 else 's' }}</td>
+            <td><span class="pill">{{ order.status }}</span></td>
+            <td class="right">{{ order.total_cents|money }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% else %}
+  <p class="empty">
+    You have not ordered anything yet.
+    <a href="{{ url_for('catalog.index') }}">Find something you like</a>
+  </p>
+{% endif %}
+{% endblock %}

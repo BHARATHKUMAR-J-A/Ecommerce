@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Admin &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>Store dashboard</h1>
+  <div class="adminhead__actions">
+    <a href="{{ url_for('admin.sellers') }}">
+      Sellers{% if stats.pending_sellers %} <span class="badge">{{ stats.pending_sellers }}</span>{% endif %}
+    </a>
+    <a class="btn btn--primary" href="{{ url_for('admin.create_product') }}">Add product</a>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat"><span>{{ stats.products }}</span>Live products</div>
+  <div class="stat"><span>{{ stats.sold_out }}</span>Sold out</div>
+  <div class="stat"><span>{{ stats.orders }}</span>Orders</div>
+  <div class="stat"><span>{{ stats.customers }}</span>Customers</div>
+  <div class="stat"><span>{{ stats.sellers }}</span>Sellers</div>
+  <div class="stat"><span>{{ stats.revenue|money }}</span>Gross revenue</div>
+  <div class="stat stat--wide"><span>{{ stats.commission|money }}</span>Commission earned</div>
+</div>
+
+<div class="cartlayout">
+  <section class="panel">
+    <h2>Recent orders</h2>
+    {% if recent %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr><th scope="col">Reference</th><th scope="col">Customer</th>
+                <th scope="col">Status</th><th scope="col" class="right">Total</th></tr>
+          </thead>
+          <tbody>
+            {% for order in recent %}
+              <tr>
+                <td><code>{{ order.reference }}</code></td>
+                <td>{{ order.email }}</td>
+                <td><span class="pill">{{ order.status }}</span></td>
+                <td class="right">{{ order.total_cents|money }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>        </table>
+      </div>
+      <p><a href="{{ url_for('admin.orders') }}">Manage all orders &rarr;</a></p>
+    {% else %}
+      <p class="muted">No orders yet.</p>
+    {% endif %}
+  </section>
+
+  <aside class="panel">
+    <h2>Lowest stock</h2>
+    <ul class="ministack ministack--roomy">
+      {% for p in low_stock %}
+        <li>
+          <span aria-hidden="true">{{ p.icon }}</span>
+          <span><a href="{{ url_for('admin.edit_product', product_id=p.id) }}">{{ p.name }}</a></span>
+          <strong class="{{ 'danger' if p.stock == 0 else '' }}">{{ p.stock }}</strong>
+        </li>
+      {% endfor %}
+    </ul>
+    <a href="{{ url_for('admin.products') }}">Manage all products &rarr;</a>
+  </aside>
+</div>
+{% endblock %}

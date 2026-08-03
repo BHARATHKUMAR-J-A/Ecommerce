@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Orders &middot; Admin{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>Orders <span class="muted">({{ orders|length }})</span></h1>
+  <a href="{{ url_for('admin.dashboard') }}">&larr; Dashboard</a>
+</div>
+
+{% if orders %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Reference</th>
+          <th scope="col">Customer</th>
+          <th scope="col">Placed</th>
+          <th scope="col" class="right">Units</th>
+          <th scope="col" class="right">Total</th>
+          <th scope="col" class="right">Our cut</th>
+          <th scope="col">Status</th>
+          <th scope="col">Move to</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for order in orders %}
+          <tr class="{{ 'is-dim' if order.status == 'cancelled' else '' }}">
+            <td class="nowrap"><code>{{ order.reference }}</code></td>
+            <td>
+              {{ order.email }}
+              {% if not order.user_id %}<span class="pill">guest</span>{% endif %}
+            </td>
+            <td class="nowrap">{{ order.created_at }}</td>
+            <td class="right">{{ order.units }}</td>
+            <td class="right">{{ order.total_cents|money }}</td>
+            <td class="right">{{ order.commission|money }}</td>
+            <td><span class="pill">{{ order.status }}</span></td>
+            <td class="nowrap">
+              {% set nexts = transitions.get(order.status, ()) %}
+              {% if nexts %}
+                {% for target in nexts %}
+                  <form action="{{ url_for('admin.update_order_status', order_id=order.id) }}"
+                        method="post" class="inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="status" value="{{ target }}">
+                    <button type="submit"
+                            class="linklike {{ 'danger' if target == 'cancelled' else '' }}">
+                      {{ target|capitalize }}
+                    </button>
+                  </form>
+                {% endfor %}
+              {% else %}
+                <span class="muted">&mdash;</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted small">Cancelling an order returns its items to stock.</p>
+{% else %}
+  <p class="empty">No orders yet.</p>
+{% endif %}
+{% endblock %}

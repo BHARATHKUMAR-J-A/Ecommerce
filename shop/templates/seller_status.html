@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Your seller application &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<section class="authbox">
+  <h1>{{ seller.shop_name }}</h1>
+
+  {% if seller.status == 'pending' %}
+    <p class="flash flash--info">
+      Your application is being reviewed. We will email {{ seller.contact_email }}
+      when there is news.
+    </p>
+  {% elif seller.status == 'rejected' %}
+    <p class="flash flash--error">
+      This application was not approved. Contact support if you think that is a mistake.
+    </p>
+  {% elif seller.status == 'suspended' %}
+    <p class="flash flash--error">
+      This shop is suspended, so its listings are hidden from the storefront.
+      Existing orders are unaffected.
+    </p>
+  {% endif %}
+
+  <dl class="summary__list">
+    <dt>Status</dt><dd><span class="pill">{{ seller.status }}</span></dd>
+    <dt>Applied</dt><dd>{{ seller.created_at }}</dd>
+    <dt>Commission</dt><dd>{{ (seller.commission_rate * 100)|round(2)|float|int }}%</dd>
+  </dl>
+
+  <a href="{{ url_for('catalog.index') }}">&larr; Back to the shop</a>
+</section>
+{% endblock %}

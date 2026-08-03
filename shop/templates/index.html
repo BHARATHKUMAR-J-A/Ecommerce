@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+
+{% block title %}
+  {% if query %}"{{ query }}" &middot; {{ store_name }}
+  {% elif category %}{{ category.name }} &middot; {{ store_name }}
+  {% else %}{{ store_name }} &middot; {{ store_tagline }}{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if show_hero %}
+  <section class="hero">
+    <div class="hero__copy">
+      <p class="hero__kicker">New season, {{ total }} products in stock</p>
+      <h1>Everything you need,<br>one cart away.</h1>
+      <p class="hero__lede">
+        Electronics, fashion, groceries, pet gear and more &mdash; shipped free over $50.
+      </p>
+      <a class="btn btn--primary btn--lg" href="#catalogue">Start shopping</a>
+    </div>
+    <ul class="hero__tiles">
+      {% for c in nav_categories[:6] %}
+        <li data-cat="{{ c.slug }}">
+          <a href="{{ url_for('catalog.category', slug=c.slug) }}">
+            <span aria-hidden="true">{{ c.icon }}</span>
+            {{ c.name }}
+          </a>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endif %}
+
+<section id="catalogue" class="listing">
+  <header class="listing__head">
+    <div>
+      <h2>
+        {% if query %}Results for &ldquo;{{ query }}&rdquo;
+        {% elif category %}{{ category.icon }} {{ category.name }}
+        {% else %}All products{% endif %}
+      </h2>
+      <p class="muted">{{ total }} item{{ '' if total == 1 else 's' }}</p>
+    </div>
+
+    <form class="filters" method="get" action="{{ request.path }}">
+      {% if query %}<input type="hidden" name="q" value="{{ query }}">{% endif %}
+      <label class="sr-only" for="sort">Sort by</label>
+      <select id="sort" name="sort" data-autosubmit>
+        {% for key, option in sort_options.items() %}
+          <option value="{{ key }}" {% if key == sort_key %}selected{% endif %}>{{ option[1] }}</option>
+        {% endfor %}
+      </select>
+      <label class="sr-only" for="min">Minimum price</label>
+      <input id="min" type="number" name="min" min="0" placeholder="Min $"
+             value="{{ request.args.get('min', '') }}">
+      <label class="sr-only" for="max">Maximum price</label>
+      <input id="max" type="number" name="max" min="0" placeholder="Max $"
+             value="{{ request.args.get('max', '') }}">
+      <label class="check">
+        <input type="checkbox" name="instock" value="1"
+               {% if request.args.get('instock') %}checked{% endif %}> In stock
+      </label>
+      <button type="submit" class="btn btn--ghost">Apply</button>
+    </form>
+  </header>
+
+  {% if products %}
+    <div class="grid">
+      {% for product in products %}{{ ui.product_card(product, request.full_path) }}{% endfor %}
+    </div>
+
+    {% if pages > 1 %}
+      {% set page_args = request.args.to_dict() %}
+      {% set _ = page_args.update(request.view_args or {}) %}
+      <nav class="pager" aria-label="Pagination">
+        {% for n in page_numbers %}
+          {% if n is none %}
+            <span class="pager__gap" aria-hidden="true">&hellip;</span>
+          {% else %}
+            {% set _ = page_args.update({'page': n}) %}
+            <a class="pager__link {% if n == page %}is-active{% endif %}"
+               href="{{ url_for(request.endpoint, **page_args) }}"
+               {% if n == page %}aria-current="page"{% endif %}>{{ n }}</a>
+          {% endif %}
+        {% endfor %}
+      </nav>
+    {% endif %}
+  {% else %}
+    <p class="empty">
+      Nothing matched that.
+      <a href="{{ url_for('catalog.index') }}">Clear filters</a>
+    </p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Track an order &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<section class="authbox">
+  <h1>Track your order</h1>
+  <p class="muted">
+    Enter the reference from your confirmation along with the email address you
+    used at checkout.
+  </p>
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label for="reference">Order reference</label>
+    <input id="reference" name="reference" value="{{ reference }}"
+           placeholder="SS-20260803-A1B2C3" maxlength="32" required autofocus>
+
+    <label for="email">Email used at checkout</label>
+    <input id="email" name="email" type="email" maxlength="120"
+           required autocomplete="email">
+
+    <button type="submit" class="btn btn--primary btn--lg btn--block">Find order</button>
+  </form>
+
+  {% if not g.user %}
+    <p class="muted">
+      Have an account? <a href="{{ url_for('auth.login') }}">Sign in</a> to see
+      every order in one place.
+    </p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Flask instance folder - holds the database, uploaded photos AND the generated
+# secret key. None of it belongs in version control.
+instance/
+*.sqlite
+secret_key
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

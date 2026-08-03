@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Sellers &middot; Admin{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>Sellers <span class="muted">({{ sellers|length }})</span></h1>
+  <a href="{{ url_for('admin.dashboard') }}">&larr; Dashboard</a>
+</div>
+
+{% if sellers %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">Shop</th>
+          <th scope="col">Account</th>
+          <th scope="col">Status</th>
+          <th scope="col" class="right">Listings</th>
+          <th scope="col" class="right">Gross</th>
+          <th scope="col" class="right">Our cut</th>
+          <th scope="col" class="right">Owed</th>
+          <th scope="col">Rate</th>
+          <th scope="col"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sellers %}
+          <tr class="{{ 'is-dim' if s.status in ('rejected', 'suspended') else '' }}">
+            <td>
+              <a href="{{ url_for('sellers.storefront', slug=s.slug) }}">{{ s.shop_name }}</a>
+              {% if s.bio %}<br><span class="muted small">{{ s.bio[:70] }}</span>{% endif %}
+            </td>
+            <td class="small">{{ s.account_email }}</td>
+            <td><span class="pill">{{ s.status }}</span></td>
+            <td class="right">{{ s.listings }}</td>
+            <td class="right">{{ s.gross|money }}</td>
+            <td class="right"><strong>{{ s.commission|money }}</strong></td>
+            <td class="right">{{ s.owed|money }}</td>
+            <td>
+              <form action="{{ url_for('admin.update_commission', seller_id=s.id) }}"
+                    method="post" class="ratefield">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <label class="sr-only" for="rate-{{ s.id }}">Commission percent</label>
+                <input id="rate-{{ s.id }}" name="commission_percent" type="number"
+                       step="0.5" min="0" max="100"
+                       value="{{ (s.commission_rate * 100)|round(2) }}">
+                <button type="submit" class="linklike">Set</button>
+              </form>
+            </td>
+            <td class="right nowrap">
+              {% if s.status == 'pending' %}
+                {% set choices = ['approve', 'reject'] %}
+              {% elif s.status == 'approved' %}
+                {% set choices = ['suspend'] %}
+              {% else %}
+                {% set choices = ['reinstate'] %}
+              {% endif %}
+              {% for choice in choices %}
+                <form action="{{ url_for('admin.update_seller', seller_id=s.id, action=choice) }}"
+                      method="post" class="inline">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button type="submit"
+                          class="linklike {{ 'danger' if choice in ('reject', 'suspend') else '' }}">
+                    {{ choice|capitalize }}
+                  </button>
+                </form>
+              {% endfor %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted small">
+    Changing a rate only affects future sales &mdash; the split on each past order line
+    is frozen at the moment of sale. Suspending a shop hides its listings immediately
+    but leaves existing orders alone.
+  </p>
+{% else %}
+  <p class="empty">Nobody has applied to sell yet.</p>
+{% endif %}
+{% endblock %}

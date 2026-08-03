@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ seller.shop_name }} &middot; Seller dashboard{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <div>
+    <h1>{{ seller.shop_name }}</h1>
+    <p class="muted">
+      <a href="{{ url_for('sellers.storefront', slug=seller.slug) }}">View your public shop</a>
+      &middot; {{ (seller.commission_rate * 100)|round(2)|float|int }}% commission
+    </p>
+  </div>
+  <a class="btn btn--primary" href="{{ url_for('sellers.create_product') }}">List a product</a>
+</div>
+
+<div class="stats">
+  <div class="stat"><span>{{ totals.units }}</span>Items sold</div>
+  <div class="stat"><span>{{ totals.gross|money }}</span>Gross sales</div>
+  <div class="stat"><span>{{ totals.commission|money }}</span>Commission paid</div>
+  <div class="stat stat--wide"><span>{{ totals.earnings|money }}</span>Your earnings</div>
+</div>
+
+<div class="stats">
+  <div class="stat"><span>{{ listings.total }}</span>Listings</div>
+  <div class="stat"><span>{{ listings.live }}</span>Live</div>
+  <div class="stat"><span>{{ listings.sold_out }}</span>Out of stock</div>
+</div>
+
+<div class="cartlayout">
+  <section class="panel">
+    <h2>Recent sales</h2>
+    {% if recent %}
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th scope="col">Order</th><th scope="col">Item</th>
+              <th scope="col">Status</th><th scope="col" class="right">You earn</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recent %}
+              <tr class="{{ 'is-dim' if row.status == 'cancelled' else '' }}">
+                <td class="nowrap"><code>{{ row.reference }}</code></td>
+                <td>{{ row.quantity }} &times; {{ row.name }}</td>
+                <td><span class="pill">{{ row.status }}</span></td>
+                <td class="right">{{ row.seller_earning_cents|money }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p><a href="{{ url_for('sellers.sales') }}">All sales &rarr;</a></p>
+    {% else %}
+      <p class="muted">No sales yet. Once someone buys from you it will show up here.</p>
+    {% endif %}
+  </section>
+
+  <aside class="panel">
+    <h2>How earnings work</h2>
+    <p class="small muted">
+      For every item sold we take
+      {{ (seller.commission_rate * 100)|round(2)|float|int }}% of the line total and you
+      keep the rest. The split is fixed at the moment of sale, so a later change to your
+      rate never rewrites what you have already earned.
+    </p>
+    <p class="small muted">
+      Cancelled orders are excluded from all the figures above, and their stock is
+      returned to your listings automatically.
+    </p>
+    <p class="small muted">This is a demo &mdash; no money moves and no payouts are made.</p>
+    <a href="{{ url_for('sellers.products') }}">Manage listings &rarr;</a>
+  </aside>
+</div>
+{% endblock %}

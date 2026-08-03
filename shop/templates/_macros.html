@@ -1,0 +1,55 @@
+{% macro add_to_cart(product, next_url='', compact=false) %}
+  <form action="{{ url_for('cart.add', product_id=product.id) }}" method="post" class="addform">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="next" value="{{ next_url }}">
+    {% if not compact %}
+      <label class="sr-only" for="qty-{{ product.id }}">Quantity</label>
+      <input id="qty-{{ product.id }}" class="qty" type="number" name="quantity"
+             value="1" min="1" max="{{ product.stock if product.stock < 20 else 20 }}">
+    {% endif %}
+    <button type="submit" class="btn btn--primary" {% if product.stock <= 0 %}disabled{% endif %}>
+      {{ 'Out of stock' if product.stock <= 0 else 'Add to cart' }}
+    </button>
+  </form>
+{% endmacro %}
+
+
+{% macro product_card(product, next_url='') %}
+  <article class="card" data-cat="{{ product.category_slug|default('', true) }}">
+    <a class="card__media" href="{{ url_for('catalog.product', product_id=product.id) }}"
+       aria-label="{{ product.name }}">
+      {% if product.image %}
+        <img class="card__photo" loading="lazy" alt=""
+             src="{{ url_for('sellers.media', filename=product.image) }}">
+      {% else %}
+        <span class="card__icon" aria-hidden="true">{{ product.icon }}</span>
+      {% endif %}
+      {% if product.stock <= 0 %}
+        <span class="tag tag--muted">Sold out</span>
+      {% elif product.stock <= 20 %}
+        <span class="tag tag--warn">Only {{ product.stock }} left</span>
+      {% endif %}
+    </a>
+    <div class="card__body">
+      {% if product.shop_name %}
+        <p class="card__eyebrow">
+          <a href="{{ url_for('sellers.storefront', slug=product.seller_slug) }}">{{ product.shop_name }}</a>
+        </p>
+      {% elif product.category_name %}
+        <p class="card__eyebrow">{{ product.category_name }}</p>
+      {% endif %}
+      <h3 class="card__title">
+        <a href="{{ url_for('catalog.product', product_id=product.id) }}">{{ product.name }}</a>
+      </h3>
+      <p class="card__rating">
+        <span class="stars" aria-hidden="true">{{ product.rating|stars }}</span>
+        <span class="sr-only">Rated {{ product.rating }} out of 5</span>
+        {{ '%.1f'|format(product.rating) }}
+      </p>
+      <div class="card__foot">
+        <span class="price">{{ product.price_cents|money }}</span>
+        {{ add_to_cart(product, next_url, compact=true) }}
+      </div>
+    </div>
+  </article>
+{% endmacro %}

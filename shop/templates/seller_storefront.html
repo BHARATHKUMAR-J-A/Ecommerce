@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "_macros.html" as ui %}
+{% block title %}{{ seller.shop_name }} &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<section class="shophead">
+  <h1>{{ seller.shop_name }}</h1>
+  {% if seller.bio %}<p class="shophead__bio">{{ seller.bio }}</p>{% endif %}
+  <p class="muted small">
+    An independent seller on {{ store_name }} since {{ seller.created_at[:10] }}.
+  </p>
+</section>
+
+<section class="listing">
+  <h2>{{ products|length }} listing{{ '' if products|length == 1 else 's' }}</h2>
+  {% if products %}
+    <div class="grid">
+      {% for product in products %}{{ ui.product_card(product) }}{% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">This shop has nothing listed right now.</p>
+  {% endif %}
+</section>
+{% endblock %}

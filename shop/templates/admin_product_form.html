@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if product else 'New' }} product &middot; Admin{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>{{ 'Edit product' if product else 'New product' }}</h1>
+  <a href="{{ url_for('admin.products') }}">&larr; All products</a>
+</div>
+
+<section class="panel panel--narrow">
+  <form method="post" class="stack">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="row">
+      <div>
+        <label for="sku">SKU</label>
+        <input id="sku" name="sku" value="{{ form.sku|default('', true) }}"
+               maxlength="32" required>
+      </div>
+      <div>
+        <label for="icon">Icon</label>
+        <input id="icon" name="icon" value="{{ form.icon|default('', true) }}" maxlength="8">
+      </div>
+    </div>
+
+    <label for="name">Name</label>
+    <input id="name" name="name" value="{{ form.name|default('', true) }}"
+           maxlength="120" required>
+
+    <label for="description">Description</label>
+    <textarea id="description" name="description" rows="4"
+              maxlength="1000">{{ form.description|default('', true) }}</textarea>
+
+    <label for="category_id">Category</label>
+    <select id="category_id" name="category_id" required>
+      <option value="">Choose a category&hellip;</option>
+      {% for c in categories %}
+        <option value="{{ c.id }}"
+          {% if form.category_id|default('', true)|string == c.id|string %}selected{% endif %}>
+          {{ c.name }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <div class="row row--3">
+      <div>
+        <label for="price">Price ($)</label>
+        <input id="price" name="price" type="text" inputmode="decimal"
+               value="{{ form.price|default('', true) }}" required>
+      </div>
+      <div>
+        <label for="stock">Stock</label>
+        <input id="stock" name="stock" type="number" min="0"
+               value="{{ form.stock|default(0, true) }}" required>
+      </div>
+      <div>
+        <label for="rating">Rating</label>
+        <input id="rating" type="text" disabled
+               value="{{ '%.2f'|format(form.rating|default(0, true)|float) }}">
+      </div>
+    </div>
+    <p class="hint">Ratings come from customer reviews and cannot be set by hand.</p>
+
+    <label class="check">
+      <input type="checkbox" name="is_active" value="1"
+             {% if form.is_active|default(0, true) %}checked{% endif %}>
+      Visible in the storefront
+    </label>
+
+    <button type="submit" class="btn btn--primary btn--lg">
+      {{ 'Save changes' if product else 'Create product' }}
+    </button>
+  </form>
+</section>
+{% endblock %}

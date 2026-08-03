@@ -1,0 +1,8 @@
+# Normalise line endings in the repository so a Windows checkout never shows
+# every line of every file as changed.
+* text=auto eol=lf
+
+*.sqlite binary
+*.webp binary
+*.png binary
+*.jpg binary

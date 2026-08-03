@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit listing' if product else 'New listing' }} &middot; {{ seller.shop_name }}{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>{{ 'Edit listing' if product else 'List a product' }}</h1>
+  <a href="{{ url_for('sellers.products') }}">&larr; Your listings</a>
+</div>
+
+<div class="cartlayout">
+  <section class="panel">
+    <form method="post" class="stack" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label for="name">Product name</label>
+      <input id="name" name="name" value="{{ form.name|default('', true) }}"
+             maxlength="120" required autofocus>
+
+      <label for="description">Description</label>
+      <textarea id="description" name="description" rows="5"
+                maxlength="2000">{{ form.description|default('', true) }}</textarea>
+      <p class="hint">Say what it is, what it is made of, and what the buyer receives.</p>
+
+      <label for="category_id">Category</label>
+      <select id="category_id" name="category_id" required>
+        <option value="">Choose a category&hellip;</option>
+        {% for c in categories %}
+          <option value="{{ c.id }}"
+            {% if form.category_id|default('', true)|string == c.id|string %}selected{% endif %}>
+            {{ c.name }}
+          </option>
+        {% endfor %}
+      </select>
+
+      <div class="row row--3">
+        <div>
+          <label for="price">Price ($)</label>
+          <input id="price" name="price" type="text" inputmode="decimal"
+                 value="{{ form.price|default('', true) }}" required>
+        </div>
+        <div>
+          <label for="stock">Stock</label>
+          <input id="stock" name="stock" type="number" min="0"
+                 value="{{ form.stock|default(1, true) }}" required>
+        </div>
+        <div>
+          <label for="icon">Fallback icon</label>
+          <input id="icon" name="icon" value="{{ form.icon|default('', true) }}" maxlength="8">
+        </div>
+      </div>
+
+      <label for="images">Photos</label>
+      <input id="images" name="images" type="file" accept="image/*" multiple>
+      <p class="hint">
+        Up to 5 per listing, 5 MB each. JPEG, PNG, WebP or GIF. Photos are re-encoded
+        on upload, which removes any location data they carry.
+      </p>
+
+      <label class="check">
+        <input type="checkbox" name="is_active" value="1"
+               {% if form.is_active|default(1, true) %}checked{% endif %}>
+        Visible in the shop
+      </label>
+
+      <button type="submit" class="btn btn--primary btn--lg">
+        {{ 'Save changes' if product else 'List it' }}
+      </button>
+    </form>
+  </section>
+
+  <aside class="panel">
+    <h2>Photos</h2>
+    {% if images %}
+      <div class="imagegrid">
+        {% for image in images %}
+          <figure class="imagegrid__item">
+            <img alt="Photo {{ loop.index }}"
+                 src="{{ url_for('sellers.media', filename=image.filename) }}">
+            <figcaption>
+              <form action="{{ url_for('sellers.delete_image', product_id=product.id, image_id=image.id) }}"
+                    method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="linklike danger small">Remove</button>
+              </form>
+            </figcaption>
+          </figure>
+        {% endfor %}
+      </div>
+    {% elif product %}
+      <p class="muted">No photos yet. Add some with the form &mdash; listings with
+        photos sell noticeably better.</p>
+    {% else %}
+      <p class="muted">Save the listing and your photos will appear here.</p>
+    {% endif %}
+
+    <h2>Your cut</h2>
+    <p class="small muted">
+      {{ store_name }} takes {{ (seller.commission_rate * 100)|round(2)|float|int }}% of
+      each sale. On a {{ form.price|default('20.00', true) }} item priced as entered,
+      you keep roughly
+      {{ (100 - seller.commission_rate * 100)|round(0, 'floor')|int }}% of the line total.
+    </p>
+  </aside>
+</div>
+{% endblock %}

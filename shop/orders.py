@@ -1,0 +1,310 @@
+"""Checkout and order history."""
+
+from __future__ import annotations
+
+import re
+import secrets
+import sqlite3
+from datetime import datetime, timezone
+
+from flask import (
+    Blueprint,
+    abort,
+    current_app,
+    flash,
+    g,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+
+from .cart import cart_summary, clear_cart
+from .db import get_db
+from .mail import order_confirmation, send_email
+from .security import get_throttle, login_required
+
+bp = Blueprint("orders", __name__, url_prefix="/orders")
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$")
+
+ADDRESS_FIELDS = {
+    "ship_name": ("Full name", 80),
+    "ship_address": ("Address", 200),
+    "ship_city": ("City", 80),
+    "ship_postcode": ("Postcode", 20),
+    "ship_country": ("Country", 60),
+}
+
+# Fulfilment states an order may move to next. Terminal states map to nothing.
+STATUS_TRANSITIONS = {
+    "paid": ("packed", "cancelled"),
+    "packed": ("shipped", "cancelled"),
+    "shipped": ("delivered",),
+    "delivered": (),
+    "cancelled": (),
+}
+
+
+def advance_status(order_id: int, target: str) -> str | None:
+    """Move an order to `target`, restocking if it is being cancelled.
+
+    Returns an error message, or None on success.
+    """
+    db = get_db()
+    order = db.execute(
+        "SELECT id, status FROM orders WHERE id = ?", (order_id,)
+    ).fetchone()
+    if order is None:
+        return "That order no longer exists."
+    if target not in STATUS_TRANSITIONS.get(order["status"], ()):
+        return f"An order that is {order['status']} cannot become {target}."
+
+    try:
+        if target == "cancelled":
+            items = db.execute(
+                "SELECT product_id, quantity FROM order_items"
+                " WHERE order_id = ? AND product_id IS NOT NULL",
+                (order_id,),
+            ).fetchall()
+            for item in items:
+                db.execute(
+                    "UPDATE products SET stock = stock + ? WHERE id = ?",
+                    (item["quantity"], item["product_id"]),
+                )
+        db.execute("UPDATE orders SET status = ? WHERE id = ?", (target, order_id))
+        db.commit()
+    except sqlite3.Error:
+        db.rollback()
+        return "We could not update that order. Please try again."
+    return None
+
+
+def _new_reference() -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    return f"SS-{stamp}-{secrets.token_hex(3).upper()}"
+
+
+def _commission_for(seller_id: int | None, line_cents: int) -> tuple[float, int]:
+    """The platform's cut of one line. Own stock has no commission - it is all ours."""
+    if seller_id is None:
+        return 0.0, 0
+    seller = get_db().execute(
+        "SELECT commission_rate FROM sellers WHERE id = ?", (seller_id,)
+    ).fetchone()
+    rate = seller["commission_rate"] if seller else current_app.config["COMMISSION_RATE"]
+    return rate, min(line_cents, round(line_cents * rate))
+
+
+def _read_address() -> tuple[dict, list[str]]:
+    values, errors = {}, []
+    for field, (label, max_len) in ADDRESS_FIELDS.items():
+        value = (request.form.get(field) or "").strip()
+        if not value:
+            errors.append(f"{label} is required.")
+        elif len(value) > max_len:
+            errors.append(f"{label} must be {max_len} characters or fewer.")
+        values[field] = value[:max_len]
+    return values, errors
+
+
+def _read_email() -> tuple[str, list[str]]:
+    email = (request.form.get("email") or "").strip().lower()[:120]
+    if not EMAIL_RE.match(email):
+        return email, ["Please enter a valid email address."]
+    return email, []
+
+
+@bp.route("/checkout", methods=("GET", "POST"))
+def checkout():
+    guests_allowed = current_app.config["ALLOW_GUEST_CHECKOUT"]
+    if g.user is None and not guests_allowed:
+        flash("Please sign in to check out.", "info")
+        return redirect(url_for("auth.login", next=url_for("orders.checkout")))
+
+    summary = cart_summary()
+    if not summary["items"]:
+        flash("Your cart is empty.", "info")
+        return redirect(url_for("catalog.index"))
+
+    form = {field: "" for field in ADDRESS_FIELDS}
+    form["email"] = ""
+    if g.user is not None:
+        form["ship_name"] = g.user["name"]
+        form["email"] = g.user["email"]
+
+    if request.method == "POST":
+        form, errors = _read_address()
+        if g.user is not None:
+            email = g.user["email"]
+        else:
+            email, email_errors = _read_email()
+            errors = email_errors + errors
+        form["email"] = email
+
+        if errors:
+            for message in errors:
+                flash(message, "error")
+        else:
+            reference = _place_order(summary, form, email)
+            if reference:
+                clear_cart()
+                if g.user is None:
+                    # Lets the guest reach the confirmation without the email wall.
+                    session["guest_orders"] = (session.get("guest_orders") or [])[-9:] + [
+                        reference
+                    ]
+                return redirect(url_for("orders.detail", reference=reference, placed=1))
+
+    return render_template("checkout.html", summary=summary, form=form)
+
+
+def _place_order(summary: dict, address: dict, email: str) -> str | None:
+    """Decrement stock and write the order atomically; abort if anything sold out."""
+    db = get_db()
+    try:
+        cursor = db.execute(
+            "INSERT INTO orders (reference, user_id, email, ship_name, ship_address, ship_city,"
+            " ship_postcode, ship_country, subtotal_cents, shipping_cents, tax_cents, total_cents)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                _new_reference(),
+                g.user["id"] if g.user is not None else None,
+                email,
+                address["ship_name"],
+                address["ship_address"],
+                address["ship_city"],
+                address["ship_postcode"],
+                address["ship_country"],
+                summary["subtotal_cents"],
+                summary["shipping_cents"],
+                summary["tax_cents"],
+                summary["total_cents"],
+            ),
+        )
+        order_id = int(cursor.lastrowid)
+
+        for item in summary["items"]:
+            product, quantity = item["product"], item["quantity"]
+            # Guarded update: fails rather than overselling if stock moved underneath us.
+            updated = db.execute(
+                "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
+                (quantity, product["id"], quantity),
+            )
+            if updated.rowcount != 1:
+                raise ValueError(product["name"])
+
+            # Freeze the split now; a later rate change must not rewrite history.
+            rate, commission = _commission_for(product["seller_id"], item["line_cents"])
+            db.execute(
+                "INSERT INTO order_items"
+                " (order_id, product_id, seller_id, name, icon, unit_cents, quantity,"
+                "  line_cents, commission_rate, commission_cents, seller_earning_cents)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    order_id,
+                    product["id"],
+                    product["seller_id"],
+                    product["name"],
+                    product["icon"],
+                    product["price_cents"],
+                    quantity,
+                    item["line_cents"],
+                    rate,
+                    commission,
+                    item["line_cents"] - commission if product["seller_id"] else 0,
+                ),
+            )
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        flash(f"Sorry - {exc} sold out while you were checking out.", "error")
+        return None
+    except sqlite3.Error:
+        db.rollback()
+        flash("We could not process that order. Please try again.", "error")
+        return None
+
+    order = db.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    items = db.execute(
+        "SELECT * FROM order_items WHERE order_id = ? ORDER BY id", (order_id,)
+    ).fetchall()
+    send_email(
+        email, f"Your ShopSphere order {order['reference']}", order_confirmation(order, items)
+    )
+    return order["reference"]
+
+
+@bp.route("/")
+@login_required
+def history():
+    rows = get_db().execute(
+        "SELECT o.*, COUNT(i.id) AS line_count, COALESCE(SUM(i.quantity), 0) AS units"
+        " FROM orders o LEFT JOIN order_items i ON i.order_id = o.id"
+        " WHERE o.user_id = ? GROUP BY o.id ORDER BY o.id DESC",
+        (g.user["id"],),
+    ).fetchall()
+    return render_template("orders.html", orders=rows)
+
+
+def _may_view(order) -> bool:
+    """A signed-in owner, or a guest holding the reference from this session."""
+    if g.user is not None and order["user_id"] == g.user["id"]:
+        return True
+    return order["reference"] in (session.get("guest_orders") or [])
+
+
+@bp.route("/lookup", methods=("GET", "POST"))
+def lookup():
+    """Guest order tracking. Reference alone is not enough - the email must match."""
+    reference = (request.values.get("reference") or "").strip().upper()[:32]
+
+    if request.method == "POST":
+        email = (request.form.get("email") or "").strip().lower()[:120]
+        throttle = get_throttle(
+            "lookup",
+            current_app.config["LOOKUP_MAX_ATTEMPTS"],
+            current_app.config["LOGIN_WINDOW_SECONDS"],
+        )
+        key = f"ip:{request.remote_addr}"
+
+        if throttle.retry_after(key):
+            flash("Too many lookups. Please wait a few minutes.", "error")
+            return render_template("order_lookup.html", reference=reference), 429
+
+        order = get_db().execute(
+            "SELECT reference FROM orders WHERE reference = ? AND email = ?",
+            (reference, email),
+        ).fetchone()
+        if order is None:
+            throttle.record_failure(key)
+            flash("No order matches that reference and email address.", "error")
+        else:
+            session["guest_orders"] = (session.get("guest_orders") or [])[-9:] + [
+                order["reference"]
+            ]
+            return redirect(url_for("orders.detail", reference=order["reference"]))
+
+    return render_template("order_lookup.html", reference=reference)
+
+
+@bp.route("/<reference>")
+def detail(reference: str):
+    db = get_db()
+    order = db.execute(
+        "SELECT * FROM orders WHERE reference = ?", (reference,)
+    ).fetchone()
+    # 404 rather than 403 so a wrong guess cannot confirm the reference exists.
+    if order is None or not _may_view(order):
+        if g.user is None:
+            flash("Please confirm the email address used for that order.", "info")
+            return redirect(url_for("orders.lookup", reference=reference))
+        abort(404, description="We could not find that order.")
+
+    items = db.execute(
+        "SELECT * FROM order_items WHERE order_id = ? ORDER BY id", (order["id"],)
+    ).fetchall()
+    return render_template(
+        "order_detail.html", order=order, items=items, placed=request.args.get("placed")
+    )

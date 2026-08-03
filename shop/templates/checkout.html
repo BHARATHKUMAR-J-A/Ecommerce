@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Checkout &middot; {{ store_name }}{% endblock %}
+
+{% block content %}
+<h1>Checkout</h1>
+
+<div class="cartlayout">
+  <section class="panel">
+    <h2>Delivery address</h2>
+    {% if not g.user %}
+      <p class="muted small">
+        Checking out as a guest.
+        <a href="{{ url_for('auth.login', next=url_for('orders.checkout')) }}">Sign in</a>
+        instead to keep all your orders together.
+      </p>
+    {% endif %}
+    <form method="post" class="stack" autocomplete="on">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      {% if not g.user %}
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" value="{{ form.email }}"
+               maxlength="120" required autocomplete="email">
+        <p class="hint">We send your confirmation here, and you will need it to track the order.</p>
+      {% endif %}
+
+      <label for="ship_name">Full name</label>
+      <input id="ship_name" name="ship_name" value="{{ form.ship_name }}"
+             maxlength="80" required autocomplete="name">
+
+      <label for="ship_address">Address</label>
+      <input id="ship_address" name="ship_address" value="{{ form.ship_address }}"
+             maxlength="200" required autocomplete="street-address">
+
+      <div class="row">
+        <div>
+          <label for="ship_city">City</label>
+          <input id="ship_city" name="ship_city" value="{{ form.ship_city }}"
+                 maxlength="80" required autocomplete="address-level2">
+        </div>
+        <div>
+          <label for="ship_postcode">Postcode</label>
+          <input id="ship_postcode" name="ship_postcode" value="{{ form.ship_postcode }}"
+                 maxlength="20" required autocomplete="postal-code">
+        </div>
+      </div>
+
+      <label for="ship_country">Country</label>
+      <input id="ship_country" name="ship_country" value="{{ form.ship_country }}"
+             maxlength="60" required autocomplete="country-name">
+
+      <p class="muted small">
+        This is a demonstration checkout. No payment method is requested and no money moves.
+      </p>
+      <button type="submit" class="btn btn--primary btn--lg">
+        Place order &middot; {{ summary["total_cents"]|money }}
+      </button>
+    </form>
+  </section>
+
+  <aside class="summary">
+    <h2>{{ summary["count"] }} item{{ '' if summary["count"] == 1 else 's' }}</h2>
+    <ul class="ministack">
+      {% for item in summary["items"] %}
+        <li>
+          <span aria-hidden="true">{{ item.product.icon }}</span>
+          <span>{{ item.quantity }} &times; {{ item.product.name }}</span>
+          <strong>{{ item.line_cents|money }}</strong>
+        </li>
+      {% endfor %}
+    </ul>
+    <dl>
+      <dt>Subtotal</dt><dd>{{ summary["subtotal_cents"]|money }}</dd>
+      <dt>Shipping</dt>
+      <dd>{{ 'Free' if summary["shipping_cents"] == 0 else summary["shipping_cents"]|money }}</dd>
+      <dt>Tax</dt><dd>{{ summary["tax_cents"]|money }}</dd>
+    </dl>
+    <p class="summary__total"><span>Total</span> <strong>{{ summary["total_cents"]|money }}</strong></p>
+    <a href="{{ url_for('cart.view') }}">&larr; Back to cart</a>
+  </aside>
+</div>
+{% endblock %}

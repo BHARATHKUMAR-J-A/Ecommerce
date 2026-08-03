@@ -27,7 +27,7 @@
         {% for s in sellers %}
           <tr class="{{ 'is-dim' if s.status in ('rejected', 'suspended') else '' }}">
             <td>
-              <a href="{{ url_for('sellers.storefront', slug=s.slug) }}">{{ s.shop_name }}</a>
+              <a href="{{ url_for('admin.seller_detail', seller_id=s.id) }}">{{ s.shop_name }}</a>
               {% if s.bio %}<br><span class="muted small">{{ s.bio[:70] }}</span>{% endif %}
             </td>
             <td class="small">{{ s.account_email }}</td>

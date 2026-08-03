@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Sales report &middot; Admin{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>Sales report</h1>
+  <div class="adminhead__actions">
+    <a href="{{ url_for('admin.dashboard') }}">&larr; Dashboard</a>
+    <a href="{{ url_for('admin.sellers') }}">Sellers</a>
+  </div>
+</div>
+
+<form class="filters filters--wide" method="get" action="{{ url_for('admin.sales_report') }}">
+  <label class="sr-only" for="period">Period</label>
+  <select id="period" name="period" data-autosubmit>
+    {% for key, option in periods.items() %}
+      <option value="{{ key }}" {% if key == period %}selected{% endif %}>{{ option[1] }}</option>
+    {% endfor %}
+  </select>
+  <label class="sr-only" for="sort">Sort items by</label>
+  <select id="sort" name="sort" data-autosubmit>
+    {% for key in sorts %}
+      <option value="{{ key }}" {% if key == sort %}selected{% endif %}>
+        Sort by {{ key }}
+      </option>
+    {% endfor %}
+  </select>
+  <noscript><button type="submit" class="btn btn--ghost">Apply</button></noscript>
+</form>
+
+<div class="stats">
+  <div class="stat"><span>{{ totals.units }}</span>Items sold</div>
+  <div class="stat"><span>{{ totals.orders }}</span>Orders</div>
+  <div class="stat"><span>{{ totals.gross|money }}</span>Goods sold</div>
+  <div class="stat"><span>{{ totals.seller_earnings|money }}</span>Owed to sellers</div>
+  <div class="stat stat--wide stat--hero">
+    <span>{{ totals.platform_revenue|money }}</span>Your revenue
+  </div>
+</div>
+
+<p class="muted small">
+  Your revenue is {{ totals.commission|money }} commission on seller items plus
+  {{ totals.own_sales|money }} from your own stock. &ldquo;Goods sold&rdquo; is what
+  customers paid for products, before shipping and tax, and most of it belongs to
+  the sellers. Cancelled orders are excluded everywhere.
+</p>
+
+<section class="listing">
+  <h2>Every item sold</h2>
+  {% if items %}
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">Item</th>
+            <th scope="col">Sold by</th>
+            <th scope="col" class="right">Units</th>
+            <th scope="col" class="right">Orders</th>
+            <th scope="col" class="right">Goods sold</th>
+            <th scope="col" class="right">Seller keeps</th>
+            <th scope="col" class="right">You keep</th>
+            <th scope="col">Last sold</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+            <tr>
+              <td>
+                {% if item.product_id %}
+                  <a href="{{ url_for('catalog.product', product_id=item.product_id) }}">{{ item.name }}</a>
+                {% else %}
+                  {{ item.name }} <span class="muted small">(delisted)</span>
+                {% endif %}
+                {% if item.variant_label %}
+                  <br><span class="muted small">{{ item.variant_label }}</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if item.shop_name %}
+                  <a href="{{ url_for('sellers.storefront', slug=item.seller_slug) }}">{{ item.shop_name }}</a>
+                {% else %}
+                  <span class="muted">Own stock</span>
+                {% endif %}
+              </td>
+              <td class="right">{{ item.units }}</td>
+              <td class="right">{{ item.orders }}</td>
+              <td class="right">{{ item.gross|money }}</td>
+              <td class="right">{{ item.seller_earnings|money }}</td>
+              <td class="right"><strong>{{ item.platform_revenue|money }}</strong></td>
+              <td class="nowrap muted small">{{ item.last_sold[:10] }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="empty">Nothing sold in this period.</p>
+  {% endif %}
+</section>
+
+<div class="cartlayout">
+  <section class="panel">
+    <h2>By seller</h2>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th scope="col">Shop</th>
+            <th scope="col" class="right">Items</th>
+            <th scope="col" class="right">Units</th>
+            <th scope="col" class="right">Goods sold</th>
+            <th scope="col" class="right">They keep</th>
+            <th scope="col" class="right">You keep</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in sellers %}
+            <tr class="{{ 'is-dim' if s.status != 'approved' }}">
+              <td>
+                <a href="{{ url_for('admin.seller_detail', seller_id=s.id) }}">{{ s.shop_name }}</a>
+                <br><span class="muted small">
+                  {{ s.status }} &middot; {{ (s.commission_rate * 100)|round(2)|float|int }}%
+                </span>
+              </td>
+              <td class="right">{{ s.distinct_items }}</td>
+              <td class="right">{{ s.units }}</td>
+              <td class="right">{{ s.gross|money }}</td>
+              <td class="right">{{ s.owed|money }}</td>
+              <td class="right"><strong>{{ s.commission|money }}</strong></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="muted small">
+      Sellers with no sales in this period are still listed, at zero.
+    </p>
+  </section>
+
+  <aside class="panel">
+    <h2>By day</h2>
+    {% if daily %}
+      <table class="table">
+        <thead>
+          <tr><th scope="col">Day</th><th scope="col" class="right">Units</th>
+              <th scope="col" class="right">You keep</th></tr>
+        </thead>
+        <tbody>
+          {% for day in daily %}
+            <tr>
+              <td class="nowrap">{{ day.day }}</td>
+              <td class="right">{{ day.units }}</td>
+              <td class="right">{{ day.platform_revenue|money }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No sales in this period.</p>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

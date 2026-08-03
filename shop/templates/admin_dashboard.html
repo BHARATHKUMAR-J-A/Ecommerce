@@ -5,6 +5,7 @@
 <div class="adminhead">
   <h1>Store dashboard</h1>
   <div class="adminhead__actions">
+    <a href="{{ url_for('admin.sales_report') }}">Sales report</a>
     <a href="{{ url_for('admin.store_settings') }}">Settings</a>
     <a href="{{ url_for('admin.sellers') }}">
       Sellers{% if stats.pending_sellers %} <span class="badge">{{ stats.pending_sellers }}</span>{% endif %}
@@ -19,9 +20,24 @@
   <div class="stat"><span>{{ stats.orders }}</span>Orders</div>
   <div class="stat"><span>{{ stats.customers }}</span>Customers</div>
   <div class="stat"><span>{{ stats.sellers }}</span>Sellers</div>
-  <div class="stat"><span>{{ stats.revenue|money }}</span>Gross revenue</div>
-  <div class="stat stat--wide"><span>{{ stats.commission|money }}</span>Commission earned</div>
+  <div class="stat"><span>{{ money.units }}</span>Items sold</div>
 </div>
+
+<div class="stats">
+  <div class="stat"><span>{{ stats.customers_paid|money }}</span>Customers paid</div>
+  <div class="stat"><span>{{ money.seller_earnings|money }}</span>Owed to sellers</div>
+  <div class="stat"><span>{{ money.commission|money }}</span>Commission</div>
+  <div class="stat"><span>{{ money.own_sales|money }}</span>Own-brand sales</div>
+  <div class="stat stat--wide stat--hero">
+    <span>{{ money.platform_revenue|money }}</span>Your revenue
+  </div>
+</div>
+
+<p class="muted small">
+  &ldquo;Customers paid&rdquo; includes shipping and tax and the sellers' share, so it is
+  not yours to keep. Your revenue is commission on seller items plus your own-brand
+  sales. <a href="{{ url_for('admin.sales_report') }}">Full breakdown by item and seller</a>.
+</p>
 
 <div class="cartlayout">
   <section class="panel">
@@ -51,6 +67,27 @@
   </section>
 
   <aside class="panel">
+    <h2>Best sellers</h2>
+    {% if top_items %}
+      <ul class="ministack ministack--roomy">
+        {% for item in top_items %}
+          <li>
+            <span>
+              <strong>{{ item.name }}</strong>
+              {% if item.variant_label %}<span class="muted small"> &middot; {{ item.variant_label }}</span>{% endif %}
+              <br><span class="muted small">
+                {{ item.units }} sold &middot; {{ item.shop_name or 'own stock' }}
+              </span>
+            </span>
+            <strong>{{ item.platform_revenue|money }}</strong>
+          </li>
+        {% endfor %}
+      </ul>
+      <a href="{{ url_for('admin.sales_report') }}">Full sales report &rarr;</a>
+    {% else %}
+      <p class="muted">Nothing sold yet.</p>
+    {% endif %}
+
     <h2>Lowest stock</h2>
     <ul class="ministack ministack--roomy">
       {% for p in low_stock %}

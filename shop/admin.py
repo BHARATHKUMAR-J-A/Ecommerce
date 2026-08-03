@@ -6,7 +6,7 @@ import sqlite3
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
-from . import settings
+from . import reports, settings
 from .db import get_db
 from .orders import STATUS_TRANSITIONS, advance_status
 from .products import read_product_fields
@@ -34,9 +34,7 @@ def dashboard():
         " (SELECT COUNT(*) FROM sellers WHERE status = 'approved') AS sellers,"
         " (SELECT COUNT(*) FROM sellers WHERE status = 'pending') AS pending_sellers,"
         " (SELECT COALESCE(SUM(total_cents), 0) FROM orders"
-        "  WHERE status != 'cancelled') AS revenue,"
-        " (SELECT COALESCE(SUM(i.commission_cents), 0) FROM order_items i"
-        "  JOIN orders o ON o.id = i.order_id WHERE o.status != 'cancelled') AS commission"
+        "  WHERE status != 'cancelled') AS customers_paid"
     ).fetchone()
     recent = db.execute(
         "SELECT o.* FROM orders o ORDER BY o.id DESC LIMIT 8"
@@ -45,7 +43,72 @@ def dashboard():
         "SELECT * FROM products WHERE is_active = 1 ORDER BY stock ASC LIMIT 8"
     ).fetchall()
     return render_template(
-        "admin_dashboard.html", stats=stats, recent=recent, low_stock=low_stock
+        "admin_dashboard.html",
+        stats=stats,
+        money=reports.totals("all"),
+        recent=recent,
+        low_stock=low_stock,
+        top_items=reports.items("all", limit=5),
+    )
+
+
+@bp.route("/reports")
+@admin_required
+def sales_report():
+    period = request.args.get("period", reports.DEFAULT_PERIOD)
+    if period not in reports.PERIODS:
+        period = reports.DEFAULT_PERIOD
+    sort = request.args.get("sort", reports.DEFAULT_ITEM_SORT)
+    if sort not in reports.ITEM_SORTS:
+        sort = reports.DEFAULT_ITEM_SORT
+
+    return render_template(
+        "admin_reports.html",
+        period=period,
+        sort=sort,
+        periods=reports.PERIODS,
+        sorts=reports.ITEM_SORTS,
+        totals=reports.totals(period),
+        items=reports.items(period, sort),
+        sellers=reports.sellers(period),
+        daily=reports.daily(period),
+    )
+
+
+@bp.route("/sellers/<int:seller_id>")
+@admin_required
+def seller_detail(seller_id: int):
+    db = get_db()
+    seller = db.execute(
+        "SELECT s.*, u.email AS account_email, u.name AS account_name"
+        " FROM sellers s JOIN users u ON u.id = s.user_id WHERE s.id = ?",
+        (seller_id,),
+    ).fetchone()
+    if seller is None:
+        abort(404, description="No such seller.")
+
+    period = request.args.get("period", "all")
+    if period not in reports.PERIODS:
+        period = "all"
+
+    listings = db.execute(
+        "SELECT p.*, c.name AS category_name,"
+        " (SELECT COALESCE(SUM(i.quantity), 0) FROM order_items i"
+        "  JOIN orders o ON o.id = i.order_id"
+        "  WHERE i.product_id = p.id AND o.status != 'cancelled') AS sold"
+        " FROM products p JOIN categories c ON c.id = p.category_id"
+        " WHERE p.seller_id = ? ORDER BY sold DESC, p.name",
+        (seller_id,),
+    ).fetchall()
+
+    return render_template(
+        "admin_seller_detail.html",
+        seller=seller,
+        period=period,
+        periods=reports.PERIODS,
+        totals=reports.totals(period, seller_id=seller_id),
+        items=reports.items(period, seller_id=seller_id),
+        listings=listings,
     )
 
 

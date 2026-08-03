@@ -37,10 +37,10 @@ Change or remove them before deploying this anywhere reachable — set
 python -m unittest discover -s tests -t .
 ```
 
-130 tests covering the catalogue, search, cart maths, checkout, stock accounting,
+192 tests covering the catalogue, search, cart maths, checkout, stock accounting,
 order fulfilment, reviews, password reset, seller onboarding, image uploads,
-commission accounting and the security controls listed below. It takes about two
-minutes — most of that is scrypt deliberately being slow.
+commission accounting, sales reporting and the security controls listed below. It
+takes about two minutes — most of that is scrypt deliberately being slow.
 
 CI runs the whole suite on every push against Python 3.12, 3.13 and 3.14 on Linux
 and 3.13 on Windows, plus a smoke job that boots the real app and serves every
@@ -78,6 +78,42 @@ already the platform's.
 The admin can set a different rate per seller, suspend a shop (which hides its
 listings everywhere immediately, without touching existing orders), and see gross,
 commission and amount owed per seller.
+
+## What the owner actually earns
+
+A marketplace has two numbers that are easy to confuse, so the admin area names
+them separately and never mixes them:
+
+| Figure | What it is |
+| --- | --- |
+| **Customers paid** | `SUM(orders.total_cents)` — the money that moved. Includes shipping and tax **and the sellers' share**, so it is not yours. |
+| **Goods sold** | the product lines only, before shipping and tax. |
+| **Owed to sellers** | `SUM(seller_earning_cents)`. |
+| **Your revenue** | commission on seller items **plus** own-brand sales. This is the one that is yours to keep. |
+
+`goods sold = owed to sellers + your revenue`, exactly, and there is a test that
+asserts it. The dashboard used to call the first figure "gross revenue", which
+flattered the number by counting other people's money and the tax collected on
+their behalf.
+
+`/admin/reports` breaks that down over a chosen window (24 hours, 7 days, 30 days,
+12 months, or all time):
+
+- **every item sold**, with units, orders, goods sold, the seller's cut and yours.
+  Product options are reported as separate rows, so "Mug — copper red" and
+  "Mug — oatmeal" have their own numbers rather than being averaged together.
+- **every seller**, including ones with no sales in the window, which appear at zero
+  rather than vanishing — a shop that has stopped selling is the thing you want to
+  notice.
+- **a per-day series** for the last 30 days.
+
+`/admin/sellers/<id>` is the drill-down for one shop: their totals, what they sold,
+what is owed, and their current listings.
+
+All of it is derived from `order_items` joined to live order status, so cancelling
+an order removes it from every figure at once. The period and sort selectors are
+looked up in a fixed dictionary — the SQL never sees user input, so a hostile
+`?period=` is a fallback rather than an injection.
 
 ## Photo uploads
 
@@ -123,11 +159,12 @@ plus the email address they checked out with.
 every product is the live average of its reviews, not a fixed number, and reviews
 from someone who actually bought the item are badged "Verified purchase".
 
-**Admin** — dashboard with revenue and low-stock lists, product create/edit/hide, and
-an order queue. Orders move `paid → packed → shipped → delivered`, or get cancelled
-from `paid`/`packed`; cancelling returns the items to stock and drops the order out
-of the revenue figure. Illegal jumps are refused rather than silently applied.
-Products are soft-deleted so past orders stay intact.
+**Admin** — dashboard separating takings from actual revenue, a sales report by item
+and by seller, low-stock lists, product create/edit/hide, and an order queue. Orders
+move `paid → packed → shipped → delivered`, or get cancelled from `paid`/`packed`;
+cancelling returns the items to stock and drops the order out of every money figure.
+Illegal jumps are refused rather than silently applied. Products are soft-deleted so
+past orders stay intact.
 
 ## Email
 
@@ -176,6 +213,13 @@ Set `SHOP_HTTPS=1` behind TLS to add the `Secure` flag to the session cookie.
   split payments (Stripe Connect or similar) and a payout ledger.
 - **Seller listings are not moderated.** Approved sellers publish immediately.
   Add a review queue before opening this to the public.
+- **The reports are computed live on every request.** That is honest and always
+  correct, but it is a full scan of `order_items` each time. Fine at demo scale;
+  at real scale you would want a nightly rollup table, or at least an index on
+  `orders.created_at`.
+- **Refunds are not modelled.** An order is either counted or cancelled; there is
+  no partial return, so the money figures cannot express "two of the three came
+  back".
 - **Settings added after the first version live in `create_app`,** not `config.py`,
   because that file is excluded from edits in this workspace. Worth consolidating.
 
@@ -189,16 +233,19 @@ shop/
   db.py                 SQLite connection, schema version guard, `flask init-db`
   schema.sql            tables, constraints, the FTS5 index and visible_products
   seed.py               the demo catalogue, its reviews and two demo shops
+  settings.py           store settings held in the database, with config fallback
   security.py           CSRF, auth guards, throttling, redirect safety, headers
   mail.py               console / file / SMTP backends and message bodies
   uploads.py            image validation, re-encoding and storage
   products.py           product form parsing shared by admin and sellers
+  variants.py           product options, stock roll-up and price ranges
   catalog.py            browse, search, product detail
   cart.py               cart state and pricing
   orders.py             checkout, commission split, fulfilment, guest lookup
   reviews.py            review CRUD and the rating cache
+  reports.py            the sales queries behind the dashboard and the report
   sellers.py            applications, listings, photos, sales and earnings
-  admin.py              dashboard, product management, order queue, sellers
+  admin.py              dashboard, sales report, products, order queue, sellers
   templates/            Jinja templates
   static/               stylesheet, one small script, favicon
 tests/test_shop.py

@@ -1930,5 +1930,173 @@ class TestTheme(ShopTestCase):
         self.assertNotIn("evil.example.com", response.headers["Location"])
 
 
+class TestSalesReporting(ShopTestCase):
+    """A seller item and an own-brand item are bought, then reported on."""
+
+    def setUp(self):
+        super().setUp()
+        self.login()
+        self.mug = self.query("SELECT * FROM products WHERE name = 'Ceramic Planter (small)'")
+        self.buy(self.mug["id"], 3)   # $26.00 seller item, 10% commission
+        self.buy(2, 1)                # $89.90 own-brand earbuds
+        self.checkout()
+        self.logout()
+        self.login("admin@shopsphere.test", "Admin#12345")
+
+    def buy(self, product_id, quantity):
+        return self.add_to_cart(product_id, quantity)
+
+    def checkout(self):
+        return self.client.post(
+            "/orders/checkout",
+            data={
+                "ship_name": "Demo Shopper", "ship_address": "1 Test Street",
+                "ship_city": "Testville", "ship_postcode": "123456",
+                "ship_country": "Singapore",
+                "csrf_token": self.csrf("/orders/checkout"),
+            },
+        )
+
+    def totals(self, period="all", seller_id=None):
+        with self.app.app_context():
+            from shop import reports
+
+            return reports.totals(period, seller_id=seller_id)
+
+    def test_platform_revenue_is_commission_plus_own_sales(self):
+        t = self.totals()
+        self.assertEqual(t["commission"], 780)        # 10% of $78.00
+        self.assertEqual(t["own_sales"], 8990)        # the earbuds, entirely ours
+        self.assertEqual(t["platform_revenue"], 780 + 8990)
+
+    def test_gross_splits_exactly_between_seller_and_platform(self):
+        t = self.totals()
+        self.assertEqual(t["gross"], 7800 + 8990)
+        self.assertEqual(t["seller_earnings"] + t["platform_revenue"], t["gross"])
+
+    def test_units_and_orders_are_counted(self):
+        t = self.totals()
+        self.assertEqual(t["units"], 4)
+        self.assertEqual(t["orders"], 1)
+
+    def test_report_lists_each_item(self):
+        body = self.client.get("/admin/reports?period=all").get_data(as_text=True)
+        self.assertIn("Ceramic Planter", body)
+        self.assertIn("Nimbus Wireless Earbuds", body)
+        self.assertIn("Kiln &amp; Clay", body)
+        self.assertIn("Own stock", body)
+
+    def test_report_shows_platform_revenue_per_item(self):
+        body = self.client.get("/admin/reports?period=all").get_data(as_text=True)
+        self.assertIn("$7.80", body)    # commission on the planters
+        self.assertIn("$89.90", body)   # the whole own-brand line
+
+    def test_seller_breakdown_totals_match(self):
+        with self.app.app_context():
+            from shop import reports
+
+            rows = {row["shop_name"]: row for row in reports.sellers("all")}
+        kiln = rows["Kiln & Clay"]
+        self.assertEqual(kiln["units"], 3)
+        self.assertEqual(kiln["gross"], 7800)
+        self.assertEqual(kiln["commission"], 780)
+        self.assertEqual(kiln["owed"], 7020)
+
+    def test_sellers_with_no_sales_still_appear_at_zero(self):
+        with self.app.app_context():
+            from shop import reports
+
+            names = {row["shop_name"]: row for row in reports.sellers("all")}
+        self.assertIn("Northline Woodwork", names)
+        self.assertEqual(names["Northline Woodwork"]["gross"], 0)
+
+    def test_seller_drilldown_shows_only_their_items(self):
+        seller_id = self.query("SELECT id FROM sellers WHERE slug = 'kiln-and-clay'")["id"]
+        body = self.client.get(f"/admin/sellers/{seller_id}").get_data(as_text=True)
+        self.assertIn("Ceramic Planter", body)
+        self.assertNotIn("Nimbus Wireless Earbuds", body)
+
+    def test_seller_scoped_totals_exclude_other_sellers(self):
+        seller_id = self.query("SELECT id FROM sellers WHERE slug = 'kiln-and-clay'")["id"]
+        scoped = self.totals(seller_id=seller_id)
+        self.assertEqual(scoped["gross"], 7800)
+        self.assertEqual(scoped["own_sales"], 0)
+
+    def test_unknown_seller_is_404(self):
+        self.assertEqual(self.client.get("/admin/sellers/99999").status_code, 404)
+
+    def test_cancelled_orders_are_excluded(self):
+        order_id = self.query("SELECT id FROM orders ORDER BY id DESC")["id"]
+        self.client.post(
+            f"/admin/orders/{order_id}/status",
+            data={"status": "cancelled", "csrf_token": self.csrf("/admin/orders")},
+        )
+        t = self.totals()
+        self.assertEqual(t["platform_revenue"], 0)
+        self.assertEqual(t["units"], 0)
+
+    def test_period_filter_narrows_the_window(self):
+        with self.app.app_context():
+            from shop.db import get_db
+
+            db = get_db()
+            db.execute("UPDATE orders SET created_at = datetime('now', '-90 days')")
+            db.commit()
+        self.assertEqual(self.totals("30d")["units"], 0)
+        self.assertEqual(self.totals("all")["units"], 4)
+
+    def test_unknown_period_falls_back_instead_of_reaching_sql(self):
+        response = self.client.get("/admin/reports?period=');DROP TABLE orders;--")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(self.query("SELECT id FROM orders LIMIT 1"))
+
+    def test_unknown_sort_falls_back(self):
+        response = self.client.get("/admin/reports?sort=gross;DELETE FROM users")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNotNone(self.query("SELECT id FROM users LIMIT 1"))
+
+    def test_variants_are_reported_separately(self):
+        mug = self.query("SELECT * FROM products WHERE name = 'Speckled Stoneware Mug'")
+        glazes = self.rows(
+            "SELECT * FROM product_variants WHERE product_id = ? ORDER BY position",
+            (mug["id"],),
+        )
+        self.logout()
+        self.login()
+        self.add_to_cart(mug["id"], 1, variant_id=glazes[0]["id"])
+        self.add_to_cart(mug["id"], 1, variant_id=glazes[2]["id"])
+        self.checkout()
+        self.logout()
+        self.login("admin@shopsphere.test", "Admin#12345")
+
+        body = self.client.get("/admin/reports?period=all").get_data(as_text=True)
+        self.assertIn("Oatmeal", body)
+        self.assertIn("Copper red", body)
+
+    def test_dashboard_separates_takings_from_revenue(self):
+        body = self.client.get("/admin/").get_data(as_text=True)
+        self.assertIn("Customers paid", body)
+        self.assertIn("Your revenue", body)
+        self.assertIn("Owed to sellers", body)
+
+    def test_shopper_cannot_see_the_report(self):
+        self.logout()
+        self.login()
+        self.assertEqual(self.client.get("/admin/reports").status_code, 403)
+        seller_id = self.query("SELECT id FROM sellers LIMIT 1")["id"]
+        self.assertEqual(self.client.get(f"/admin/sellers/{seller_id}").status_code, 403)
+
+    def test_seller_cannot_see_another_shops_numbers(self):
+        self.logout()
+        self.login("maya@shopsphere.test", "Seller#12345")
+        self.assertEqual(self.client.get("/admin/reports").status_code, 403)
+
+    def rows(self, sql, params=()):
+        with self.app.app_context():
+            from shop.db import get_db
+
+            return get_db().execute(sql, params).fetchall()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

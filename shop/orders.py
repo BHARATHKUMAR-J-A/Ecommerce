@@ -23,7 +23,7 @@ from flask import (
 from . import settings
 from .cart import cart_summary, clear_cart
 from .db import get_db
-from .mail import order_confirmation, send_email
+from .mail import order_confirmation, seller_sale, send_email, shipping_update
 from .security import get_throttle, login_required
 from .variants import refresh_product_stock
 
@@ -48,6 +48,10 @@ STATUS_TRANSITIONS = {
     "cancelled": (),
 }
 
+# "packed" is warehouse bookkeeping, not news. Emailing every internal step is
+# how a shop teaches its customers to ignore its email.
+NOTIFY_STATUSES = ("shipped", "delivered", "cancelled")
+
 
 def advance_status(order_id: int, target: str) -> str | None:
     """Move an order to `target`, restocking if it is being cancelled.
@@ -55,9 +59,7 @@ def advance_status(order_id: int, target: str) -> str | None:
     Returns an error message, or None on success.
     """
     db = get_db()
-    order = db.execute(
-        "SELECT id, status FROM orders WHERE id = ?", (order_id,)
-    ).fetchone()
+    order = db.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
     if order is None:
         return "That order no longer exists."
     if target not in STATUS_TRANSITIONS.get(order["status"], ()):
@@ -87,6 +89,14 @@ def advance_status(order_id: int, target: str) -> str | None:
     except sqlite3.Error:
         db.rollback()
         return "We could not update that order. Please try again."
+
+    # After the commit: a bounced email must not undo a fulfilment step.
+    if target in NOTIFY_STATUSES and order["email"]:
+        send_email(
+            order["email"],
+            f"Your ShopSphere order {order['reference']} - {target}",
+            shipping_update(order, target),
+        )
     return None
 
 
@@ -258,7 +268,34 @@ def _place_order(summary: dict, address: dict, email: str) -> str | None:
     send_email(
         email, f"Your ShopSphere order {order['reference']}", order_confirmation(order, items)
     )
+    _notify_sellers(db, order, items)
     return order["reference"]
+
+
+def _notify_sellers(db, order, items) -> None:
+    """One email per seller, containing only that seller's lines.
+
+    Own-brand stock notifies nobody, and a seller must never learn what else was
+    in a customer's basket.
+    """
+    seller_ids = sorted({i["seller_id"] for i in items if i["seller_id"] is not None})
+    for seller_id in seller_ids:
+        seller = db.execute(
+            "SELECT shop_name, contact_email FROM sellers WHERE id = ?", (seller_id,)
+        ).fetchone()
+        if seller is None or not seller["contact_email"]:
+            continue
+        lines = [i for i in items if i["seller_id"] == seller_id]
+        send_email(
+            seller["contact_email"],
+            f"You made a sale - order {order['reference']}",
+            seller_sale(
+                seller["shop_name"],
+                order,
+                lines,
+                url_for("sellers.sales", _external=True),
+            ),
+        )
 
 
 @bp.route("/")

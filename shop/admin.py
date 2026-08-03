@@ -4,15 +4,28 @@ from __future__ import annotations
 
 import sqlite3
 
-from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
+from flask import (
+    Blueprint,
+    Response,
+    abort,
+    flash,
+    redirect,
+    render_template,
+    request,
+    url_for,
+)
 
-from . import reports, settings
+from . import exports, reports, settings
+from .catalog import page_window
 from .db import get_db
+from .mail import application_decision, send_email
 from .orders import STATUS_TRANSITIONS, advance_status
 from .products import read_product_fields
 from .security import admin_required
 
 bp = Blueprint("admin", __name__, url_prefix="/admin")
+
+ORDERS_PER_PAGE = 25
 
 SELLER_ACTIONS = {
     "approve": "approved",
@@ -20,6 +33,22 @@ SELLER_ACTIONS = {
     "suspend": "suspended",
     "reinstate": "approved",
 }
+
+
+def _like(term: str) -> str:
+    """A LIKE pattern where the user's own % and _ are literal, not wildcards."""
+    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _csv_response(filename: str, header, rows) -> Response:
+    # The BOM is what makes Excel read it as UTF-8 rather than the local codepage.
+    body = "\ufeff" + exports.to_csv(header, rows)
+    return Response(
+        body,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @bp.route("/")
@@ -72,6 +101,65 @@ def sales_report():
         items=reports.items(period, sort),
         sellers=reports.sellers(period),
         daily=reports.daily(period),
+    )
+
+
+@bp.route("/reports.csv")
+@admin_required
+def sales_report_csv():
+    period = request.args.get("period", reports.DEFAULT_PERIOD)
+    if period not in reports.PERIODS:
+        period = reports.DEFAULT_PERIOD
+
+    rows = [
+        [
+            item["name"],
+            item["variant_label"],
+            item["shop_name"] or "Own stock",
+            item["units"],
+            item["orders"],
+            exports.money(item["gross"]),
+            exports.money(item["seller_earnings"]),
+            exports.money(item["platform_revenue"]),
+            item["last_sold"],
+        ]
+        for item in reports.items(period, "revenue", limit=100000)
+    ]
+    return _csv_response(
+        f"shopsphere-sales-{period}.csv",
+        ["Item", "Option", "Sold by", "Units", "Orders", "Goods sold",
+         "Seller keeps", "You keep", "Last sold"],
+        rows,
+    )
+
+
+@bp.route("/payouts.csv")
+@admin_required
+def payouts_csv():
+    """What each seller is owed - the file you hand to whoever moves the money."""
+    period = request.args.get("period", reports.DEFAULT_PERIOD)
+    if period not in reports.PERIODS:
+        period = reports.DEFAULT_PERIOD
+
+    rows = [
+        [
+            seller["shop_name"],
+            seller["contact_email"],
+            seller["payout_reference"],
+            seller["status"],
+            f"{seller['commission_rate'] * 100:.1f}",
+            seller["units"],
+            exports.money(seller["gross"]),
+            exports.money(seller["commission"]),
+            exports.money(seller["owed"]),
+        ]
+        for seller in reports.sellers(period)
+    ]
+    return _csv_response(
+        f"shopsphere-payouts-{period}.csv",
+        ["Shop", "Contact email", "Payout reference", "Status", "Commission %",
+         "Units", "Goods sold", "Commission", "Owed"],
+        rows,
     )
 
 
@@ -217,13 +305,53 @@ def toggle_product(product_id: int):
 @bp.route("/orders")
 @admin_required
 def orders():
-    rows = get_db().execute(
+    status = request.args.get("status", "")
+    if status not in STATUS_TRANSITIONS:
+        status = ""
+    search = request.args.get("q", "").strip()[:80]
+
+    where, params = [], []
+    if status:
+        where.append("o.status = ?")
+        params.append(status)
+    if search:
+        where.append(
+            "(o.reference LIKE ? ESCAPE '\\' OR o.email LIKE ? ESCAPE '\\'"
+            " OR o.ship_name LIKE ? ESCAPE '\\')"
+        )
+        params += [_like(search)] * 3
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+
+    db = get_db()
+    total = db.execute(f"SELECT COUNT(*) AS n FROM orders o{clause}", params).fetchone()["n"]
+    pages = max(1, -(-total // ORDERS_PER_PAGE))
+    page = max(1, min(pages, request.args.get("page", 1, type=int) or 1))
+
+    rows = db.execute(
         "SELECT o.*, COALESCE(SUM(i.quantity), 0) AS units,"
         " COALESCE(SUM(i.commission_cents), 0) AS commission"
         " FROM orders o LEFT JOIN order_items i ON i.order_id = o.id"
-        " GROUP BY o.id ORDER BY o.id DESC"
+        f"{clause} GROUP BY o.id ORDER BY o.id DESC LIMIT ? OFFSET ?",
+        params + [ORDERS_PER_PAGE, (page - 1) * ORDERS_PER_PAGE],
     ).fetchall()
-    return render_template("admin_orders.html", orders=rows, transitions=STATUS_TRANSITIONS)
+
+    counts = {
+        row["status"]: row["n"]
+        for row in db.execute("SELECT status, COUNT(*) AS n FROM orders GROUP BY status")
+    }
+    return render_template(
+        "admin_orders.html",
+        orders=rows,
+        transitions=STATUS_TRANSITIONS,
+        counts=counts,
+        total_orders=sum(counts.values()),
+        status=status,
+        search=search,
+        page=page,
+        pages=pages,
+        matched=total,
+        window=page_window(page, pages, 2),
+    )
 
 
 @bp.route("/settings", methods=("GET", "POST"))
@@ -282,14 +410,32 @@ def update_seller(seller_id: int, action: str):
     if action not in SELLER_ACTIONS:
         abort(404)
 
+    status = SELLER_ACTIONS[action]
     db = get_db()
+    seller = db.execute(
+        "SELECT s.shop_name, s.contact_email, s.status, u.name"
+        " FROM sellers s JOIN users u ON u.id = s.user_id WHERE s.id = ?",
+        (seller_id,),
+    ).fetchone()
     updated = db.execute(
         "UPDATE sellers SET status = ?, reviewed_at = datetime('now') WHERE id = ?",
-        (SELLER_ACTIONS[action], seller_id),
+        (status, seller_id),
     )
     db.commit()
     if updated.rowcount:
-        flash(f"Seller {SELLER_ACTIONS[action]}.", "success")
+        flash(f"Seller {status}.", "success")
+        # Reinstating is an "approved" too, but the applicant already knows.
+        if seller and seller["contact_email"] and seller["status"] != status:
+            send_email(
+                seller["contact_email"],
+                f"Your ShopSphere shop - {status}",
+                application_decision(
+                    seller["name"],
+                    seller["shop_name"],
+                    status,
+                    url_for("sellers.dashboard", _external=True),
+                ),
+            )
     return redirect(url_for("admin.sellers"))
 
 

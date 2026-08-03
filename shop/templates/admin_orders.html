@@ -3,9 +3,41 @@
 
 {% block content %}
 <div class="adminhead">
-  <h1>Orders <span class="muted">({{ orders|length }})</span></h1>
+  <h1>Orders <span class="muted">({{ total_orders }})</span></h1>
   <a href="{{ url_for('admin.dashboard') }}">&larr; Dashboard</a>
 </div>
+
+<nav class="chips" aria-label="Filter by status">
+  <a class="chip {% if not status %}is-active{% endif %}"
+     href="{{ url_for('admin.orders', q=search or none) }}">
+    All <span class="chip__n">{{ total_orders }}</span>
+  </a>
+  {% for name in transitions %}
+    <a class="chip {% if status == name %}is-active{% endif %}"
+       href="{{ url_for('admin.orders', status=name, q=search or none) }}">
+      {{ name|capitalize }} <span class="chip__n">{{ counts.get(name, 0) }}</span>
+    </a>
+  {% endfor %}
+</nav>
+
+<form class="filters filters--wide" method="get" action="{{ url_for('admin.orders') }}"
+      role="search">
+  {% if status %}<input type="hidden" name="status" value="{{ status }}">{% endif %}
+  <label class="sr-only" for="order-q">Find an order</label>
+  <input id="order-q" type="search" name="q" value="{{ search }}"
+         placeholder="Reference, email or name" maxlength="80">
+  <button type="submit" class="btn btn--ghost">Search</button>
+  {% if search or status %}
+    <a class="btn btn--ghost" href="{{ url_for('admin.orders') }}">Clear</a>
+  {% endif %}
+</form>
+
+{% if search or status %}
+  <p class="muted small">
+    {{ matched }} matching order{{ '' if matched == 1 else 's' }}{% if search %}
+      for &ldquo;{{ search }}&rdquo;{% endif %}.
+  </p>
+{% endif %}
 
 {% if orders %}
   <div class="table-wrap">
@@ -58,8 +90,35 @@
       </tbody>
     </table>
   </div>
-  <p class="muted small">Cancelling an order returns its items to stock.</p>
+
+  {% if pages > 1 %}
+    {% set page_args = request.args.to_dict() %}
+    <nav class="pager" aria-label="Pagination">
+      {% for n in window %}
+        {% if n is none %}
+          <span class="pager__gap" aria-hidden="true">&hellip;</span>
+        {% else %}
+          {% set _ = page_args.update({'page': n}) %}
+          <a class="pager__link {% if n == page %}is-active{% endif %}"
+             href="{{ url_for('admin.orders', **page_args) }}"
+             {% if n == page %}aria-current="page"{% endif %}>{{ n }}</a>
+        {% endif %}
+      {% endfor %}
+    </nav>
+  {% endif %}
+
+  <p class="muted small">
+    Cancelling an order returns its items to stock. Shipped, delivered and
+    cancelled each email the customer; packed does not.
+  </p>
 {% else %}
-  <p class="empty">No orders yet.</p>
+  <p class="empty">
+    {% if search or status %}
+      Nothing matched that.
+      <a href="{{ url_for('admin.orders') }}">Clear filters</a>
+    {% else %}
+      No orders yet.
+    {% endif %}
+  </p>
 {% endif %}
 {% endblock %}

@@ -106,6 +106,7 @@ def sellers(period: str = "all") -> list:
     clause, params = _window(period)
     return get_db().execute(
         "SELECT s.id, s.shop_name, s.slug, s.status, s.commission_rate,"
+        "  s.contact_email, s.payout_reference,"
         "  COALESCE(SUM(i.quantity), 0) AS units,"
         "  COUNT(DISTINCT o.id) AS orders,"
         "  COALESCE(SUM(i.line_cents), 0) AS gross,"

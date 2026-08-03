@@ -37,10 +37,11 @@ Change or remove them before deploying this anywhere reachable — set
 python -m unittest discover -s tests -t .
 ```
 
-192 tests covering the catalogue, search, cart maths, checkout, stock accounting,
+222 tests covering the catalogue, search, cart maths, checkout, stock accounting,
 order fulfilment, reviews, password reset, seller onboarding, image uploads,
-commission accounting, sales reporting and the security controls listed below. It
-takes about two minutes — most of that is scrypt deliberately being slow.
+commission accounting, sales reporting, notifications, CSV export and the security
+controls listed below. It takes about three minutes — most of that is scrypt
+deliberately being slow.
 
 CI runs the whole suite on every push against Python 3.12, 3.13 and 3.14 on Linux
 and 3.13 on Windows, plus a smoke job that boots the real app and serves every
@@ -115,6 +116,51 @@ an order removes it from every figure at once. The period and sort selectors are
 looked up in a fixed dictionary — the SQL never sees user input, so a hostile
 `?period=` is a fallback rather than an injection.
 
+### Getting the numbers out
+
+`/admin/reports.csv` and `/admin/payouts.csv` export the same figures, honouring
+the period filter. The payout file carries each shop's contact email and payout
+reference, which is what you would hand to whoever actually moves the money.
+
+Both are written through `shop/exports.py`, which neutralises **formula
+injection**. Sellers choose their own shop and product names, and a spreadsheet
+treats a leading `=`, `+`, `-` or `@` as a formula — so a shop called
+`=cmd|'/c calc'!A1` would run on the accountant's machine. Every field is escaped
+on the way out, except genuine negative numbers, which are left alone so they
+still sum.
+
+## The order queue
+
+`/admin/orders` is where fulfilment actually happens, so it is built for a shop
+with a real number of orders rather than a demo's worth:
+
+- **paginated**, 25 at a time, using the same windowed pager as the storefront.
+- **filtered by status**, with a live count on each tab — "12 paid" is the number
+  you need to pack this morning.
+- **searchable** by reference, email or recipient name, which is the actual daily
+  task: a customer emails about `SS-20260803-4A92BF` and you need it now.
+
+The search escapes `%` and `_` before they reach `LIKE`, so searching for `%`
+finds nothing rather than matching every order in the shop.
+
+## Notifications
+
+| When | Who hears about it |
+| --- | --- |
+| Order placed | the customer gets a receipt; **each seller with a line in it** gets their own email |
+| Order shipped / delivered / cancelled | the customer |
+| Seller application approved / rejected / suspended | the applicant |
+
+Two deliberate choices:
+
+- **A seller's email contains only their own lines.** They learn what they sold,
+  not what else was in the customer's basket. There is a test for it.
+- **"Packed" emails nobody.** It is warehouse bookkeeping, not news, and mailing
+  every internal step is how a shop teaches its customers to ignore its email.
+
+Emails are sent *after* the database commit, and `send_email` never raises, so a
+dead mail server cannot fail a checkout or undo a fulfilment step.
+
 ## Photo uploads
 
 Sellers upload up to five photos per listing. Uploaded files are never trusted and
@@ -160,8 +206,9 @@ every product is the live average of its reviews, not a fixed number, and review
 from someone who actually bought the item are badged "Verified purchase".
 
 **Admin** — dashboard separating takings from actual revenue, a sales report by item
-and by seller, low-stock lists, product create/edit/hide, and an order queue. Orders
-move `paid → packed → shipped → delivered`, or get cancelled from `paid`/`packed`;
+and by seller, CSV export, low-stock lists, product create/edit/hide, and a
+searchable, filterable, paginated order queue. Orders move
+`paid → packed → shipped → delivered`, or get cancelled from `paid`/`packed`;
 cancelling returns the items to stock and drops the order out of every money figure.
 Illegal jumps are refused rather than silently applied. Products are soft-deleted so
 past orders stay intact.
@@ -183,9 +230,11 @@ cannot email should still be able to take the order.
 
 | Risk | Control |
 | --- | --- |
-| SQL injection | Every query is parameterised. Sort order comes from a whitelist. Search words are quoted before they reach FTS5, so typed operators (`OR`, `NEAR`, `*`, `^`) are literal text. |
+| SQL injection | Every query is parameterised. Sort order comes from a whitelist. Search words are quoted before they reach FTS5, so typed operators (`OR`, `NEAR`, `*`, `^`) are literal text. Report periods and admin order-status filters are dictionary lookups, so an unrecognised value falls back instead of reaching SQL. Admin search escapes `%` and `_` before `LIKE` sees them. |
+| CSV formula injection | Shop and product names are written by sellers, and a spreadsheet executes a cell starting `=`, `+`, `-` or `@`. `shop/exports.py` prefixes those with an apostrophe on export, leaving real negative numbers alone. |
 | XSS | Jinja autoescaping throughout, plus a CSP with no `unsafe-inline` (category colours come from CSS classes, not inline styles). Review text is user content and is escaped like everything else. |
 | CSRF | Per-session token required on every POST/PUT/PATCH/DELETE, compared with `secrets.compare_digest`. |
+| Information leak between sellers | A sale notification contains only the recipient's own order lines, never the rest of the customer's basket. |
 | Broken access control | `@login_required` / `@admin_required` / `@seller_required` decorators. Orders are visible only to their owner, or to a guest who proved the email address. Sellers can only touch listings where `seller_id` matches their own, checked in the SQL rather than after the fact. Reviews can only be deleted by their author or an admin. |
 | Unrestricted file upload | Uploads are decoded and re-encoded by Pillow, stored under a generated name outside the static tree, and served only if the name matches the generated pattern. Size, pixel count and format are all bounded. |
 | Privilege escalation | Commission rate and seller status are set by the platform only; posting them to the application form does nothing. Admins cannot rewrite a seller's listing, only hide it. |
@@ -217,6 +266,8 @@ Set `SHOP_HTTPS=1` behind TLS to add the `Secure` flag to the session cookie.
   correct, but it is a full scan of `order_items` each time. Fine at demo scale;
   at real scale you would want a nightly rollup table, or at least an index on
   `orders.created_at`.
+- **Emails are sent inline, in the request.** A slow SMTP server makes checkout
+  slow. A real shop would queue them.
 - **Refunds are not modelled.** An order is either counted or cancelled; there is
   no partial return, so the money figures cannot express "two of the three came
   back".
@@ -244,6 +295,7 @@ shop/
   orders.py             checkout, commission split, fulfilment, guest lookup
   reviews.py            review CRUD and the rating cache
   reports.py            the sales queries behind the dashboard and the report
+  exports.py            CSV writing, with the spreadsheet-formula guard
   sellers.py            applications, listings, photos, sales and earnings
   admin.py              dashboard, sales report, products, order queue, sellers
   templates/            Jinja templates

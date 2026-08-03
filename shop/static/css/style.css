@@ -424,6 +424,12 @@ html[data-theme="dark"] .pager__link.is-active { background: var(--brand); color
 .stat--hero { background: linear-gradient(135deg, var(--brand), #7c3aed); color: rgba(255,255,255,.85); border-color: transparent; }
 .stat--hero span { color: #fff; }
 .filters--wide { justify-content: flex-start; margin-bottom: 1.25rem; }
+.chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1rem; }
+.chip { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink); font-size: .84rem; }
+.chip:hover { border-color: var(--brand); color: var(--brand); }
+.chip.is-active { background: var(--ink); border-color: var(--ink); color: #fff; }
+.chip__n { font-size: .74rem; font-weight: 700; color: var(--ink-soft); }
+.chip.is-active .chip__n { color: rgba(255,255,255,.75); }
 .table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
 .table { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .table th, .table td { padding: .7rem .85rem; text-align: left; border-bottom: 1px solid var(--line); }

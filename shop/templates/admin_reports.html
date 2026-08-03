@@ -7,6 +7,10 @@
   <div class="adminhead__actions">
     <a href="{{ url_for('admin.dashboard') }}">&larr; Dashboard</a>
     <a href="{{ url_for('admin.sellers') }}">Sellers</a>
+    <a href="{{ url_for('admin.sales_report_csv', period=period) }}"
+       download>Sales CSV</a>
+    <a href="{{ url_for('admin.payouts_csv', period=period) }}"
+       download>Payouts CSV</a>
   </div>
 </div>
 

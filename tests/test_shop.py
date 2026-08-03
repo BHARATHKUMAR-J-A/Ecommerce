@@ -622,6 +622,7 @@ class MailCapturingTestCase(ShopTestCase):
 
     def setUp(self):
         super().setUp()
+        import shop.admin
         import shop.auth
         import shop.mail
         import shop.orders
@@ -634,7 +635,7 @@ class MailCapturingTestCase(ShopTestCase):
             return True
 
         # The blueprints imported send_email by name, so patch it on each of them.
-        self._patched = (shop.auth, shop.orders)
+        self._patched = (shop.auth, shop.orders, shop.admin)
         for module in self._patched:
             module.send_email = capture
 
@@ -2096,6 +2097,337 @@ class TestSalesReporting(ShopTestCase):
             from shop.db import get_db
 
             return get_db().execute(sql, params).fetchall()
+
+
+class TestOrderQueue(ShopTestCase):
+    """The admin order list: it renders, it filters, it searches, it paginates."""
+
+    def setUp(self):
+        super().setUp()
+        self.login("admin@shopsphere.test", "Admin#12345")
+
+    def make_orders(self, count, status="paid", email="bulk@example.test"):
+        """Insert straight into the table - going through checkout 60 times is slow."""
+        with self.app.app_context():
+            from shop.db import get_db
+
+            db = get_db()
+            for n in range(count):
+                db.execute(
+                    "INSERT INTO orders (reference, user_id, email, ship_name,"
+                    " ship_address, ship_city, ship_postcode, ship_country,"
+                    " subtotal_cents, shipping_cents, tax_cents, total_cents, status)"
+                    " VALUES (?, NULL, ?, 'Bulk Buyer', '1 Test Street', 'Testville',"
+                    " '123456', 'Singapore', 1000, 0, 80, 1080, ?)",
+                    (f"SS-BULK-{status.upper()}-{n:04d}", email, status),
+                )
+            db.commit()
+
+    def get(self, query=""):
+        response = self.client.get(f"/admin/orders{query}")
+        self.assertEqual(response.status_code, 200)
+        return response.get_data(as_text=True)
+
+    def test_the_page_renders(self):
+        # A broken template used to slip through: the CSRF helper happily scrapes
+        # a token from the sign-out form on the 500 page.
+        self.assertIn("Orders", self.get())
+
+    def test_the_search_box_does_not_steal_the_header_search_label(self):
+        # Both are name="q"; giving both id="q" made the header box announce
+        # itself as "Search products Find an order" to a screen reader.
+        body = self.get()
+        self.assertEqual(body.count('id="q"'), 1)
+        self.assertIn('for="order-q"', body)
+
+    def test_a_long_queue_is_paginated(self):
+        from shop.admin import ORDERS_PER_PAGE
+
+        self.make_orders(ORDERS_PER_PAGE + 5)
+        first = self.get()
+        self.assertEqual(first.count("SS-BULK-"), ORDERS_PER_PAGE)
+        self.assertIn("Pagination", first)
+
+    def test_later_pages_show_different_orders(self):
+        from shop.admin import ORDERS_PER_PAGE
+
+        self.make_orders(ORDERS_PER_PAGE + 5)
+        page_one = set(re.findall(r"SS-BULK-[A-Z]+-\d+", self.get()))
+        page_two = set(re.findall(r"SS-BULK-[A-Z]+-\d+", self.get("?page=2")))
+        self.assertTrue(page_one)
+        self.assertTrue(page_two)
+        self.assertFalse(page_one & page_two)
+
+    def test_page_number_is_clamped(self):
+        self.make_orders(3)
+        self.assertIn("SS-BULK-", self.get("?page=99999"))
+        self.assertIn("SS-BULK-", self.get("?page=-4"))
+        self.assertIn("SS-BULK-", self.get("?page=notanumber"))
+
+    def test_status_filter_narrows_the_list(self):
+        self.make_orders(2, status="paid")
+        self.make_orders(3, status="delivered")
+        delivered = self.get("?status=delivered")
+        self.assertEqual(delivered.count("SS-BULK-DELIVERED"), 3)
+        self.assertNotIn("SS-BULK-PAID", delivered)
+
+    def test_unknown_status_shows_everything(self):
+        self.make_orders(2, status="paid")
+        self.make_orders(3, status="delivered")
+        body = self.get("?status=' OR 1=1 --")
+        self.assertIn("SS-BULK-PAID", body)
+        self.assertIn("SS-BULK-DELIVERED", body)
+
+    def test_search_finds_an_order_by_reference(self):
+        self.make_orders(4)
+        body = self.get("?q=SS-BULK-PAID-0002")
+        self.assertIn("SS-BULK-PAID-0002", body)
+        self.assertNotIn("SS-BULK-PAID-0003", body)
+
+    def test_search_finds_an_order_by_email(self):
+        self.make_orders(2, email="wanted@example.test")
+        self.make_orders(2, status="packed", email="other@example.test")
+        body = self.get("?q=wanted@example.test")
+        self.assertIn("SS-BULK-PAID", body)
+        self.assertNotIn("SS-BULK-PACKED", body)
+
+    def test_search_wildcards_are_literal(self):
+        # A bare % would otherwise match every order in the shop.
+        self.make_orders(3)
+        body = self.get("?q=%")
+        self.assertNotIn("SS-BULK-", body)
+        self.assertIn("Nothing matched", body)
+
+    def test_underscore_is_literal_too(self):
+        self.make_orders(3)
+        self.assertNotIn("SS-BULK-", self.get("?q=SS_BULK"))
+
+    def test_search_and_status_combine(self):
+        self.make_orders(2, status="paid", email="both@example.test")
+        self.make_orders(2, status="delivered", email="both@example.test")
+        body = self.get("?q=both@example.test&status=delivered")
+        self.assertEqual(body.count("SS-BULK-DELIVERED"), 2)
+        self.assertNotIn("SS-BULK-PAID", body)
+
+    def test_status_counts_are_shown(self):
+        self.make_orders(3, status="delivered")
+        self.assertRegex(self.get(), r"Delivered\s*<span class=\"chip__n\">3<")
+
+    def test_a_shopper_cannot_see_the_queue(self):
+        self.logout()
+        self.login()
+        self.assertEqual(self.client.get("/admin/orders").status_code, 403)
+
+
+class TestNotifications(MailCapturingTestCase):
+    """Sellers hear about sales, applicants hear a decision, buyers hear about shipping."""
+
+    def sent_to(self, address):
+        return [m for m in self.outbox if m["to"] == address]
+
+    def buy_and_check_out(self, product_id, quantity=1):
+        self.add_to_cart(product_id, quantity)
+        return self.client.post(
+            "/orders/checkout",
+            data={
+                "ship_name": "Demo Shopper", "ship_address": "1 Test Street",
+                "ship_city": "Testville", "ship_postcode": "123456",
+                "ship_country": "Singapore",
+                "csrf_token": self.csrf("/orders/checkout"),
+            },
+        )
+
+    def seller_product(self, slug="kiln-and-clay"):
+        """A plain listing - one with options would need a variant_id to add."""
+        product = self.query(
+            "SELECT p.id, p.name, s.contact_email FROM products p"
+            " JOIN sellers s ON s.id = p.seller_id"
+            " WHERE s.slug = ? AND p.stock > 0 AND p.personalisation_required = 0"
+            "   AND NOT EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id = p.id)"
+            " ORDER BY p.id",
+            (slug,),
+        )
+        self.assertIsNotNone(product, f"{slug} has no option-free listing to buy")
+        return product
+
+    def test_seller_is_told_when_their_item_sells(self):
+        product = self.seller_product()
+        self.login()
+        self.buy_and_check_out(product["id"], 2)
+
+        mail = self.sent_to(product["contact_email"])
+        self.assertEqual(len(mail), 1)
+        self.assertIn("sale", mail[0]["subject"].lower())
+        self.assertIn(product["name"], mail[0]["body"])
+
+    def test_own_brand_sales_notify_nobody(self):
+        self.login()
+        self.buy_and_check_out(2)  # own-brand earbuds
+        self.assertEqual(len(self.outbox), 1)  # the customer's receipt only
+
+    def test_a_seller_never_sees_another_shops_lines(self):
+        kiln = self.seller_product("kiln-and-clay")
+        northline = self.seller_product("northline-woodwork")
+        self.login()
+        self.add_to_cart(kiln["id"], 1)
+        self.add_to_cart(northline["id"], 1)
+        self.client.post(
+            "/orders/checkout",
+            data={
+                "ship_name": "Demo Shopper", "ship_address": "1 Test Street",
+                "ship_city": "Testville", "ship_postcode": "123456",
+                "ship_country": "Singapore",
+                "csrf_token": self.csrf("/orders/checkout"),
+            },
+        )
+
+        body = self.sent_to(kiln["contact_email"])[0]["body"]
+        self.assertIn(kiln["name"], body)
+        self.assertNotIn(northline["name"], body)
+
+    def test_the_seller_email_shows_their_earnings_not_the_gross(self):
+        product = self.seller_product()
+        self.login()
+        self.buy_and_check_out(product["id"], 1)
+
+        line = self.query(
+            "SELECT * FROM order_items WHERE name = ? ORDER BY id DESC", (product["name"],)
+        )
+        body = self.sent_to(product["contact_email"])[0]["body"]
+        self.assertIn(f"{line['seller_earning_cents'] / 100:,.2f}", body)
+
+    def test_shipping_moves_email_the_customer(self):
+        self.login()
+        self.buy_and_check_out(2)
+        order = self.query("SELECT * FROM orders ORDER BY id DESC")
+        self.outbox.clear()
+        self.logout()
+        self.login("admin@shopsphere.test", "Admin#12345")
+
+        self.advance(order["id"], "packed")
+        self.assertEqual(self.outbox, [], "packed is internal and should stay quiet")
+
+        self.advance(order["id"], "shipped")
+        self.assertEqual(len(self.sent_to(order["email"])), 1)
+        self.assertIn("on its way", self.outbox[-1]["body"])
+
+        self.advance(order["id"], "delivered")
+        self.assertIn("delivered", self.outbox[-1]["body"])
+
+    def test_cancelling_emails_the_customer(self):
+        self.login()
+        self.buy_and_check_out(2)
+        order = self.query("SELECT * FROM orders ORDER BY id DESC")
+        self.outbox.clear()
+        self.logout()
+        self.login("admin@shopsphere.test", "Admin#12345")
+
+        self.advance(order["id"], "cancelled")
+        self.assertIn("cancelled", self.outbox[-1]["body"])
+        self.assertIn("back into stock", self.outbox[-1]["body"])
+
+    def advance(self, order_id, status):
+        return self.client.post(
+            f"/admin/orders/{order_id}/status",
+            data={"status": status, "csrf_token": self.csrf("/admin/orders")},
+        )
+
+    def decide(self, seller_id, action):
+        return self.client.post(
+            f"/admin/sellers/{seller_id}/{action}",
+            data={"csrf_token": self.csrf("/admin/sellers")},
+        )
+
+    def test_an_applicant_is_told_they_were_approved(self):
+        self.login("admin@shopsphere.test", "Admin#12345")
+        seller = self.query("SELECT * FROM sellers WHERE status = 'pending'")
+        self.outbox.clear()
+
+        self.decide(seller["id"], "approve")
+        mail = self.sent_to(seller["contact_email"])
+        self.assertEqual(len(mail), 1)
+        self.assertIn("approved", mail[0]["body"])
+
+    def test_an_applicant_is_told_they_were_rejected(self):
+        self.login("admin@shopsphere.test", "Admin#12345")
+        seller = self.query("SELECT * FROM sellers WHERE status = 'pending'")
+        self.outbox.clear()
+
+        self.decide(seller["id"], "reject")
+        self.assertIn("not able to approve", self.sent_to(seller["contact_email"])[0]["body"])
+
+    def test_a_decision_that_changes_nothing_sends_nothing(self):
+        self.login("admin@shopsphere.test", "Admin#12345")
+        seller = self.query("SELECT * FROM sellers WHERE status = 'approved'")
+        self.outbox.clear()
+
+        self.decide(seller["id"], "approve")
+        self.assertEqual(self.outbox, [])
+
+
+class TestCsvExport(ShopTestCase):
+    def setUp(self):
+        super().setUp()
+        self.login()
+        self.add_to_cart(2, 1)
+        self.client.post(
+            "/orders/checkout",
+            data={
+                "ship_name": "Demo Shopper", "ship_address": "1 Test Street",
+                "ship_city": "Testville", "ship_postcode": "123456",
+                "ship_country": "Singapore",
+                "csrf_token": self.csrf("/orders/checkout"),
+            },
+        )
+        self.logout()
+        self.login("admin@shopsphere.test", "Admin#12345")
+
+    def test_sales_csv_downloads(self):
+        response = self.client.get("/admin/reports.csv?period=all")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.mimetype.startswith("text/csv"))
+        self.assertIn("attachment", response.headers["Content-Disposition"])
+        self.assertIn("Nimbus Wireless Earbuds", response.get_data(as_text=True))
+
+    def test_payouts_csv_carries_the_payout_reference(self):
+        body = self.client.get("/admin/payouts.csv?period=all").get_data(as_text=True)
+        self.assertIn("Payout reference", body)
+        self.assertIn("Kiln & Clay", body)
+
+    def test_money_is_a_plain_number_a_spreadsheet_can_sum(self):
+        body = self.client.get("/admin/reports.csv?period=all").get_data(as_text=True)
+        self.assertIn("89.90", body)
+        self.assertNotIn("$89.90", body)
+
+    def test_a_shop_name_cannot_smuggle_a_formula(self):
+        with self.app.app_context():
+            from shop.db import get_db
+
+            db = get_db()
+            db.execute("UPDATE sellers SET shop_name = '=1+1' WHERE slug = 'kiln-and-clay'")
+            db.commit()
+
+        body = self.client.get("/admin/payouts.csv?period=all").get_data(as_text=True)
+        self.assertIn("'=1+1", body)
+        self.assertNotRegex(body, r"(^|,)=1\+1")
+
+    def test_negative_numbers_are_left_alone(self):
+        from shop.exports import safe_cell
+
+        self.assertEqual(safe_cell("-12.50"), "-12.50")
+        self.assertEqual(safe_cell("-cmd"), "'-cmd")
+        self.assertEqual(safe_cell("@SUM(A1)"), "'@SUM(A1)")
+        self.assertEqual(safe_cell(None), "")
+
+    def test_unknown_period_falls_back(self):
+        response = self.client.get("/admin/reports.csv?period=nonsense")
+        self.assertEqual(response.status_code, 200)
+
+    def test_a_shopper_cannot_download_the_numbers(self):
+        self.logout()
+        self.login()
+        self.assertEqual(self.client.get("/admin/reports.csv").status_code, 403)
+        self.assertEqual(self.client.get("/admin/payouts.csv").status_code, 403)
 
 
 if __name__ == "__main__":

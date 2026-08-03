@@ -31,6 +31,10 @@ def read_product_fields(*, require_sku: bool) -> tuple[dict, list[str]]:
         "category_id": request.form.get("category_id", ""),
         "price": (request.form.get("price") or "").strip(),
         "stock": (request.form.get("stock") or "0").strip(),
+        "option_label": (request.form.get("option_label") or "").strip()[:40],
+        "personalisation_label": (request.form.get("personalisation_label") or "").strip()[:40],
+        "personalisation_max": (request.form.get("personalisation_max") or "60").strip(),
+        "personalisation_required": 1 if request.form.get("personalisation_required") else 0,
         "is_active": 1 if request.form.get("is_active") else 0,
     }
 
@@ -52,6 +56,14 @@ def read_product_fields(*, require_sku: bool) -> tuple[dict, list[str]]:
     except ValueError:
         errors.append("Stock must be a whole number.")
         form["stock"] = 0
+
+    try:
+        form["personalisation_max"] = max(1, min(500, int(form["personalisation_max"])))
+    except ValueError:
+        form["personalisation_max"] = 60
+
+    if form["personalisation_required"] and not form["personalisation_label"]:
+        errors.append("Name the personalisation field before making it required.")
 
     known_category = get_db().execute(
         "SELECT 1 FROM categories WHERE id = ?", (form["category_id"],)

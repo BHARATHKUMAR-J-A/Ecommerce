@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, abort, current_app, render_template, request
+from flask import Blueprint, abort, current_app, redirect, render_template, request
 
 from .db import get_db
 from .reviews import own_review, rating_breakdown, reviews_for
+from .security import safe_redirect_target
+from .variants import price_range, variants_for
 
 bp = Blueprint("catalog", __name__)
 
@@ -75,6 +77,18 @@ def category(slug: str):
     return _listing(category_slug=slug)
 
 
+@bp.post("/theme")
+def theme():
+    """Theme is a cookie the server renders, so there is no flash of the wrong one
+    and no inline script for the CSP to allow."""
+    choice = "dark" if request.form.get("theme") == "dark" else "light"
+    response = redirect(safe_redirect_target(request.form.get("next")))
+    response.set_cookie(
+        "theme", choice, max_age=60 * 60 * 24 * 365, samesite="Lax", httponly=True
+    )
+    return response
+
+
 def _listing(category_slug: str | None):
     db = get_db()
     per_page = current_app.config["PRODUCTS_PER_PAGE"]
@@ -141,7 +155,9 @@ def _listing(category_slug: str | None):
         f"SELECT p.*, c.name AS category_name, c.slug AS category_slug, c.tint,"
         f" s.shop_name, s.slug AS seller_slug,"
         f" (SELECT filename FROM product_images WHERE product_id = p.id"
-        f"  ORDER BY position, id LIMIT 1) AS image"
+        f"  ORDER BY position, id LIMIT 1) AS image,"
+        f" (SELECT COUNT(*) FROM product_variants"
+        f"  WHERE product_id = p.id AND is_active = 1) AS option_count"
         f" FROM visible_products p JOIN categories c ON c.id = p.category_id"
         f" LEFT JOIN sellers s ON s.id = p.seller_id"
         f" WHERE {clause} ORDER BY {order_sql} LIMIT ? OFFSET ?",
@@ -183,18 +199,25 @@ def product(product_id: int):
     ).fetchall()
     related = db.execute(
         "SELECT p.*, (SELECT filename FROM product_images WHERE product_id = p.id"
-        "  ORDER BY position, id LIMIT 1) AS image"
+        "  ORDER BY position, id LIMIT 1) AS image,"
+        " (SELECT COUNT(*) FROM product_variants"
+        "  WHERE product_id = p.id AND is_active = 1) AS option_count"
         " FROM visible_products p WHERE p.category_id = ? AND p.id != ?"
         " ORDER BY p.rating DESC LIMIT 4",
         (row["category_id"], row["id"]),
     ).fetchall()
 
     product_reviews = reviews_for(product_id)
+    options = variants_for(product_id)
+    low, high = price_range(product_id, row["price_cents"])
     return render_template(
         "product.html",
         product=row,
         images=images,
         related=related,
+        options=options,
+        price_low=low,
+        price_high=high,
         reviews=product_reviews,
         breakdown=rating_breakdown(product_reviews),
         my_review=own_review(product_id),

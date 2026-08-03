@@ -50,7 +50,13 @@
         <span class="muted">No reviews yet</span>
       {% endif %}
     </p>
-    <p class="price price--lg">{{ product.price_cents|money }}</p>
+    <p class="price price--lg">
+      {% if price_low != price_high %}
+        {{ price_low|money }} &ndash; {{ price_high|money }}
+      {% else %}
+        {{ price_low|money }}
+      {% endif %}
+    </p>
     <p class="detail__desc">{{ product.description }}</p>
 
     <p class="stockline">
@@ -63,7 +69,51 @@
       {% endif %}
     </p>
 
-    {{ ui.add_to_cart(product, url_for('catalog.product', product_id=product.id)) }}
+    <form action="{{ url_for('cart.add', product_id=product.id) }}" method="post" class="buybox">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ url_for('catalog.product', product_id=product.id) }}">
+
+      {% if options %}
+        <fieldset class="options">
+          <legend>{{ product.option_label or 'Choose an option' }}</legend>
+          {% for option in options %}
+            <label class="option {{ 'is-gone' if option.stock <= 0 }}">
+              <input type="radio" name="variant_id" value="{{ option.id }}"
+                     {% if option.stock <= 0 %}disabled{% endif %}
+                     {% if loop.first %}checked{% endif %} required>
+              <span class="option__label">{{ option.label }}</span>
+              <span class="option__meta">
+                {% if option.price_cents is not none and option.price_cents != product.price_cents %}
+                  {{ option.price_cents|money }}
+                {% endif %}
+                {% if option.stock <= 0 %}sold out{% elif option.stock <= 5 %}{{ option.stock }} left{% endif %}
+              </span>
+            </label>
+          {% endfor %}
+        </fieldset>
+      {% endif %}
+
+      {% if product.personalisation_label %}
+        <label for="personalisation">
+          {{ product.personalisation_label }}
+          {% if not product.personalisation_required %}<span class="muted">(optional)</span>{% endif %}
+        </label>
+        <input id="personalisation" name="personalisation" type="text"
+               maxlength="{{ product.personalisation_max }}"
+               {% if product.personalisation_required %}required{% endif %}>
+        <p class="hint">Up to {{ product.personalisation_max }} characters. Made to order, so this cannot be changed later.</p>
+      {% endif %}
+
+      <div class="buybox__row">
+        <label class="sr-only" for="qty-detail">Quantity</label>
+        <input id="qty-detail" class="qty" type="number" name="quantity" value="1"
+               min="1" max="{{ product.stock if product.stock < 20 else 20 }}">
+        <button type="submit" class="btn btn--primary btn--lg"
+                {% if product.stock <= 0 %}disabled{% endif %}>
+          {{ 'Sold out' if product.stock <= 0 else 'Add to cart' }}
+        </button>
+      </div>
+    </form>
 
     <ul class="perks">
       <li>Free delivery on orders over $50</li>

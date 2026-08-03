@@ -67,7 +67,9 @@ def _send_smtp(message: EmailMessage) -> None:
 
 
 def order_confirmation(order, items) -> str:
-    currency = current_app.config["CURRENCY_SYMBOL"]
+    from . import settings
+
+    currency = settings.get("CURRENCY_SYMBOL")
 
     def money(cents: int) -> str:
         return f"{currency}{cents / 100:,.2f}"
@@ -79,7 +81,10 @@ def order_confirmation(order, items) -> str:
         "",
     ]
     lines += [
-        f"  {item['quantity']} x {item['name']} - {money(item['line_cents'])}"
+        f"  {item['quantity']} x {item['name']}"
+        + (f" [{item['variant_label']}]" if item["variant_label"] else "")
+        + (f" engraved \"{item['personalisation']}\"" if item["personalisation"] else "")
+        + f" - {money(item['line_cents'])}"
         for item in items
     ]
     shipping = "Free" if order["shipping_cents"] == 0 else money(order["shipping_cents"])

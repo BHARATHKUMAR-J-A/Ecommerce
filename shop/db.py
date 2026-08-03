@@ -8,7 +8,7 @@ import click
 from flask import Flask, current_app, g
 
 # Raise this whenever schema.sql changes shape.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class SchemaOutOfDate(RuntimeError):

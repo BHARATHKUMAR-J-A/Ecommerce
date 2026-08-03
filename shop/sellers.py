@@ -21,14 +21,19 @@ from flask import (
 )
 
 from .db import get_db
-from .products import read_product_fields
+from .products import price_to_cents, read_product_fields
 from .security import login_required
 from .uploads import delete_product_image, is_stored_name, save_product_image, uploads_dir
+from .variants import MAX_LABEL, MAX_VARIANTS, refresh_product_stock, variants_for
 
 bp = Blueprint("sellers", __name__)
 
 MAX_IMAGES_PER_PRODUCT = 5
 SLUG_STRIP = re.compile(r"[^a-z0-9]+")
+
+# A fixed palette, so a shop's accent is a CSS class rather than an inline style
+# the Content-Security-Policy would have to allow.
+ACCENTS = ["indigo", "rose", "amber", "emerald", "sky", "violet", "slate"]
 
 
 def slugify(value: str) -> str:
@@ -96,7 +101,9 @@ def storefront(slug: str):
     products = db.execute(
         "SELECT p.*, c.name AS category_name, c.slug AS category_slug,"
         " (SELECT filename FROM product_images WHERE product_id = p.id"
-        "  ORDER BY position, id LIMIT 1) AS image"
+        "  ORDER BY position, id LIMIT 1) AS image,"
+        " (SELECT COUNT(*) FROM product_variants"
+        "  WHERE product_id = p.id AND is_active = 1) AS option_count"
         " FROM visible_products p JOIN categories c ON c.id = p.category_id"
         " WHERE p.seller_id = ? ORDER BY p.rating DESC, p.id",
         (seller["id"],),
@@ -239,11 +246,14 @@ def create_product():
             sku = f"{g.seller['slug'][:8].upper()}-{secrets.token_hex(3).upper()}"
             cursor = db.execute(
                 "INSERT INTO products (sku, name, description, price_cents, stock,"
-                " category_id, seller_id, icon, is_active)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " category_id, seller_id, icon, option_label, personalisation_label,"
+                " personalisation_max, personalisation_required, is_active)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     sku, form["name"], form["description"], form["price_cents"],
                     form["stock"], form["category_id"], g.seller["id"], form["icon"],
+                    form["option_label"], form["personalisation_label"],
+                    form["personalisation_max"], form["personalisation_required"],
                     form["is_active"],
                 ),
             )
@@ -283,14 +293,19 @@ def edit_product(product_id: int):
         if not errors:
             db.execute(
                 "UPDATE products SET name = ?, description = ?, price_cents = ?,"
-                " stock = ?, category_id = ?, icon = ?, is_active = ?"
+                " stock = ?, category_id = ?, icon = ?, option_label = ?,"
+                " personalisation_label = ?, personalisation_max = ?,"
+                " personalisation_required = ?, is_active = ?"
                 " WHERE id = ? AND seller_id = ?",
                 (
                     form["name"], form["description"], form["price_cents"],
                     form["stock"], form["category_id"], form["icon"],
+                    form["option_label"], form["personalisation_label"],
+                    form["personalisation_max"], form["personalisation_required"],
                     form["is_active"], product_id, g.seller["id"],
                 ),
             )
+            refresh_product_stock(db, product_id)
             db.commit()
 
             saved, image_errors = _store_uploads(product_id, request.files.getlist("images"))
@@ -309,7 +324,137 @@ def edit_product(product_id: int):
     return render_template(
         "seller_product_form.html", form=form, categories=categories,
         product=product, images=images, seller=g.seller,
+        options=variants_for(product_id, active_only=False),
     )
+
+
+@bp.post("/sell/products/<int:product_id>/options")
+@seller_required
+def add_option(product_id: int):
+    owned_product(product_id)
+    db = get_db()
+
+    label = (request.form.get("label") or "").strip()[:MAX_LABEL]
+    if not label:
+        flash("Give the option a name, such as a colour or a size.", "error")
+        return redirect(url_for("sellers.edit_product", product_id=product_id))
+
+    existing = db.execute(
+        "SELECT COUNT(*) AS n FROM product_variants WHERE product_id = ?", (product_id,)
+    ).fetchone()["n"]
+    if existing >= MAX_VARIANTS:
+        flash(f"A listing can have at most {MAX_VARIANTS} options.", "error")
+        return redirect(url_for("sellers.edit_product", product_id=product_id))
+
+    raw_price = (request.form.get("price") or "").strip()
+    price_cents = None
+    if raw_price:
+        price_cents = price_to_cents(raw_price)
+        if price_cents is None:
+            flash("That option price is not a valid amount.", "error")
+            return redirect(url_for("sellers.edit_product", product_id=product_id))
+
+    try:
+        stock = max(0, min(1_000_000, int(request.form.get("stock", 0))))
+    except (TypeError, ValueError):
+        stock = 0
+
+    try:
+        db.execute(
+            "INSERT INTO product_variants (product_id, label, price_cents, stock, position)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (product_id, label, price_cents, stock, existing),
+        )
+    except sqlite3.IntegrityError:
+        flash(f"This listing already has an option called {label}.", "error")
+        return redirect(url_for("sellers.edit_product", product_id=product_id))
+
+    refresh_product_stock(db, product_id)
+    db.commit()
+    flash(f"Added the {label} option.", "success")
+    return redirect(url_for("sellers.edit_product", product_id=product_id))
+
+
+@bp.post("/sell/products/<int:product_id>/options/<int:variant_id>/delete")
+@seller_required
+def delete_option(product_id: int, variant_id: int):
+    owned_product(product_id)
+    db = get_db()
+    # Kept, not deleted, if it has ever sold - order lines point at it.
+    sold = db.execute(
+        "SELECT 1 FROM order_items WHERE variant_id = ? LIMIT 1", (variant_id,)
+    ).fetchone()
+    if sold:
+        db.execute(
+            "UPDATE product_variants SET is_active = 0, stock = 0"
+            " WHERE id = ? AND product_id = ?",
+            (variant_id, product_id),
+        )
+        flash("Option retired. Past orders that used it are unaffected.", "info")
+    else:
+        db.execute(
+            "DELETE FROM product_variants WHERE id = ? AND product_id = ?",
+            (variant_id, product_id),
+        )
+        flash("Option removed.", "info")
+
+    refresh_product_stock(db, product_id)
+    db.commit()
+    return redirect(url_for("sellers.edit_product", product_id=product_id))
+
+
+@bp.route("/sell/appearance", methods=("GET", "POST"))
+@seller_required
+def appearance():
+    db = get_db()
+    if request.method == "POST":
+        accent = request.form.get("accent", "indigo")
+        if accent not in ACCENTS:
+            accent = "indigo"
+        db.execute(
+            "UPDATE sellers SET accent = ?, shipping_policy = ?, returns_policy = ?,"
+            " bio = ? WHERE id = ?",
+            (
+                accent,
+                (request.form.get("shipping_policy") or "").strip()[:1000],
+                (request.form.get("returns_policy") or "").strip()[:1000],
+                (request.form.get("bio") or "").strip()[:1000],
+                g.seller["id"],
+            ),
+        )
+        db.commit()
+
+        banner = request.files.get("banner")
+        if banner and banner.filename:
+            try:
+                filename = save_product_image(banner)
+            except ValueError as error:
+                flash(str(error), "error")
+            else:
+                if g.seller["banner"]:
+                    delete_product_image(g.seller["banner"])
+                db.execute(
+                    "UPDATE sellers SET banner = ? WHERE id = ?", (filename, g.seller["id"])
+                )
+                db.commit()
+
+        flash("Shop appearance updated.", "success")
+        return redirect(url_for("sellers.appearance"))
+
+    seller = db.execute("SELECT * FROM sellers WHERE id = ?", (g.seller["id"],)).fetchone()
+    return render_template("seller_appearance.html", seller=seller, accents=ACCENTS)
+
+
+@bp.post("/sell/appearance/banner/delete")
+@seller_required
+def delete_banner():
+    db = get_db()
+    if g.seller["banner"]:
+        delete_product_image(g.seller["banner"])
+        db.execute("UPDATE sellers SET banner = '' WHERE id = ?", (g.seller["id"],))
+        db.commit()
+        flash("Banner removed.", "info")
+    return redirect(url_for("sellers.appearance"))
 
 
 def _store_uploads(product_id: int, files) -> tuple[int, list[str]]:

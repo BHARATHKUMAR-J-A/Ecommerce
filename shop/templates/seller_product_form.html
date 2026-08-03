@@ -41,11 +41,41 @@
         <div>
           <label for="stock">Stock</label>
           <input id="stock" name="stock" type="number" min="0"
-                 value="{{ form.stock|default(1, true) }}" required>
+                 value="{{ form.stock|default(1, true) }}"
+                 {% if options %}readonly{% endif %} required>
         </div>
         <div>
           <label for="icon">Fallback icon</label>
           <input id="icon" name="icon" value="{{ form.icon|default('', true) }}" maxlength="8">
+        </div>
+      </div>
+      {% if options %}
+        <p class="hint">Stock is the total of your options and is maintained for you.</p>
+      {% endif %}
+
+      <label for="option_label">Option name</label>
+      <input id="option_label" name="option_label" maxlength="40"
+             value="{{ form.option_label|default('', true) }}"
+             placeholder="Glaze, Size, Colour…">
+      <p class="hint">What the buyer is choosing between. Leave blank if there is nothing to choose.</p>
+
+      <label for="personalisation_label">Personalisation field</label>
+      <input id="personalisation_label" name="personalisation_label" maxlength="40"
+             value="{{ form.personalisation_label|default('', true) }}"
+             placeholder="Engraving, Monogram, Gift message…">
+      <div class="row">
+        <div>
+          <label for="personalisation_max">Maximum characters</label>
+          <input id="personalisation_max" name="personalisation_max" type="number"
+                 min="1" max="500"
+                 value="{{ form.personalisation_max|default(60, true) }}">
+        </div>
+        <div>
+          <label class="check">
+            <input type="checkbox" name="personalisation_required" value="1"
+                   {% if form.personalisation_required|default(0, true) %}checked{% endif %}>
+            Required
+          </label>
         </div>
       </div>
 
@@ -69,6 +99,56 @@
   </section>
 
   <aside class="panel">
+    {% if product %}
+      <h2>Options</h2>
+      {% if options %}
+        <ul class="ministack ministack--roomy">
+          {% for option in options %}
+            <li class="{{ 'is-dim' if not option.is_active }}">
+              <span>
+                <strong>{{ option.label }}</strong>
+                {% if not option.is_active %}<span class="pill">retired</span>{% endif %}
+                <br>
+                <span class="muted small">
+                  {{ (option.price_cents if option.price_cents is not none else product.price_cents)|money }}
+                  &middot; {{ option.stock }} in stock
+                </span>
+              </span>
+              <form action="{{ url_for('sellers.delete_option', product_id=product.id, variant_id=option.id) }}"
+                    method="post">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="linklike danger small">Remove</button>
+              </form>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted small">
+          No options, so this listing sells as a single thing. Add some if it comes
+          in more than one glaze, size or colour.
+        </p>
+      {% endif %}
+
+      <form action="{{ url_for('sellers.add_option', product_id=product.id) }}"
+            method="post" class="stack">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="label">New option</label>
+        <input id="label" name="label" maxlength="60" placeholder="Oatmeal glaze" required>
+        <div class="row">
+          <div>
+            <label for="option_price">Price ($)</label>
+            <input id="option_price" name="price" type="text" inputmode="decimal"
+                   placeholder="same">
+          </div>
+          <div>
+            <label for="option_stock">Stock</label>
+            <input id="option_stock" name="stock" type="number" min="0" value="1">
+          </div>
+        </div>
+        <button type="submit" class="btn btn--ghost">Add option</button>
+      </form>
+    {% endif %}
+
     <h2>Photos</h2>
     {% if images %}
       <div class="imagegrid">

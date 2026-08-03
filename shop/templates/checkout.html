@@ -64,7 +64,11 @@
       {% for item in summary["items"] %}
         <li>
           <span aria-hidden="true">{{ item.product.icon }}</span>
-          <span>{{ item.quantity }} &times; {{ item.product.name }}</span>
+          <span>
+            {{ item.quantity }} &times; {{ item.product.name }}
+            {% if item.variant %}<br><span class="muted small">{{ item.variant.label }}</span>{% endif %}
+            {% if item.text %}<br><span class="muted small">{{ item.text }}</span>{% endif %}
+          </span>
           <strong>{{ item.line_cents|money }}</strong>
         </li>
       {% endfor %}

@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -53,12 +54,19 @@ class ShopTestCase(unittest.TestCase):
     def logout(self):
         return self.client.post("/auth/logout", data={"csrf_token": self.csrf("/")})
 
-    def add_to_cart(self, product_id=1, quantity=1):
+    def add_to_cart(self, product_id=1, quantity=1, variant_id=None, text=None):
+        data = {"quantity": quantity, "csrf_token": self.csrf("/")}
+        if variant_id is not None:
+            data["variant_id"] = variant_id
+        if text is not None:
+            data["personalisation"] = text
         return self.client.post(
-            f"/cart/add/{product_id}",
-            data={"quantity": quantity, "csrf_token": self.csrf("/")},
-            follow_redirects=True,
+            f"/cart/add/{product_id}", data=data, follow_redirects=True
         )
+
+    def cart_line_ids(self):
+        html = self.client.get("/cart/").get_data(as_text=True)
+        return re.findall(r"/cart/remove/([0-9a-f]+)", html)
 
     def place_order(self, product_id=2, quantity=1):
         """Returns the new order's reference. Caller must already be signed in."""
@@ -150,7 +158,8 @@ class TestCart(ShopTestCase):
 
     def test_remove_item(self):
         self.add_to_cart(1)
-        self.client.post("/cart/remove/1", data={"csrf_token": self.csrf("/cart/")})
+        line_id = self.cart_line_ids()[0]
+        self.client.post(f"/cart/remove/{line_id}", data={"csrf_token": self.csrf("/cart/")})
         self.assertIn("Your cart is empty", self.client.get("/cart/").get_data(as_text=True))
 
     def test_free_shipping_threshold(self):
@@ -1500,6 +1509,425 @@ class TestCommission(SellerTestCase):
 
     def test_shopper_cannot_reach_seller_admin(self):
         self.assertEqual(self.client.get("/admin/sellers").status_code, 403)
+
+
+class VariantTestCase(ShopTestCase):
+    """The seeded mug has three glazes and an optional name on the base."""
+
+    def setUp(self):
+        super().setUp()
+        self.mug = self.query("SELECT * FROM products WHERE name = 'Speckled Stoneware Mug'")
+        self.glazes = {
+            row["label"]: row
+            for row in self.rows(
+                "SELECT * FROM product_variants WHERE product_id = ?", (self.mug["id"],)
+            )
+        }
+
+    def rows(self, sql, params=()):
+        with self.app.app_context():
+            from shop.db import get_db
+
+            return get_db().execute(sql, params).fetchall()
+
+    def buy_mug(self, glaze="Oatmeal", quantity=1, text=None):
+        self.add_to_cart(
+            self.mug["id"], quantity, variant_id=self.glazes[glaze]["id"], text=text
+        )
+
+
+class TestVariants(VariantTestCase):
+    def test_product_stock_is_the_sum_of_its_options(self):
+        total = sum(v["stock"] for v in self.glazes.values())
+        self.assertEqual(self.mug["stock"], total)
+
+    def test_option_picker_is_shown(self):
+        body = self.client.get(f"/p/{self.mug['id']}").get_data(as_text=True)
+        self.assertIn("Glaze", body)
+        for label in ("Oatmeal", "Deep sea", "Copper red"):
+            self.assertIn(label, body)
+
+    def test_price_range_is_shown_when_options_differ(self):
+        body = self.client.get(f"/p/{self.mug['id']}").get_data(as_text=True)
+        self.assertIn("$32.00", body)
+        self.assertIn("$38.00", body)
+
+    def test_adding_without_choosing_is_refused(self):
+        body = self.add_to_cart(self.mug["id"]).get_data(as_text=True)
+        self.assertIn("Please choose glaze", body)
+        self.assertIn("Your cart is empty", self.client.get("/cart/").get_data(as_text=True))
+
+    def test_adding_with_a_choice_works(self):
+        self.buy_mug("Deep sea")
+        body = self.client.get("/cart/").get_data(as_text=True)
+        self.assertIn("Deep sea", body)
+        self.assertIn("$32.00", body)
+
+    def test_option_price_overrides_the_product_price(self):
+        self.buy_mug("Copper red")
+        body = self.client.get("/cart/").get_data(as_text=True)
+        self.assertIn("$38.00", body)
+
+    def test_different_options_are_separate_lines(self):
+        self.buy_mug("Oatmeal")
+        self.buy_mug("Deep sea")
+        self.assertEqual(len(self.cart_line_ids()), 2)
+
+    def test_same_option_merges_into_one_line(self):
+        self.buy_mug("Oatmeal")
+        self.buy_mug("Oatmeal")
+        self.assertEqual(len(self.cart_line_ids()), 1)
+
+    def test_quantity_is_capped_by_the_option_not_the_product(self):
+        # Oatmeal has 6 while the product total is 14, so capping against the
+        # product would wrongly let 10 through.
+        self.buy_mug("Oatmeal", quantity=10)
+        body = self.client.get("/cart/").get_data(as_text=True)
+        self.assertIn('value="6"', body)
+
+    def test_a_variant_from_another_product_is_refused(self):
+        other = self.query(
+            "SELECT id FROM product_variants WHERE product_id != ? LIMIT 1",
+            (self.mug["id"],),
+        )
+        body = self.add_to_cart(self.mug["id"], variant_id=other["id"]).get_data(as_text=True)
+        self.assertIn("Please choose glaze", body)
+
+    def test_grid_sends_option_products_to_the_page(self):
+        body = self.client.get("/?q=Speckled").get_data(as_text=True)
+        self.assertIn("Choose options", body)
+
+    def test_checkout_records_the_chosen_option(self):
+        self.login()
+        self.buy_mug("Copper red")
+        self.checkout()
+        line = self.query("SELECT * FROM order_items ORDER BY id DESC")
+        self.assertEqual(line["variant_label"], "Copper red")
+        self.assertEqual(line["unit_cents"], 3800)
+
+    def test_checkout_decrements_the_option_and_rolls_up(self):
+        before = self.glazes["Oatmeal"]["stock"]
+        self.login()
+        self.buy_mug("Oatmeal", quantity=2)
+        self.checkout()
+
+        after = self.query(
+            "SELECT stock FROM product_variants WHERE id = ?", (self.glazes["Oatmeal"]["id"],)
+        )["stock"]
+        self.assertEqual(after, before - 2)
+        product_stock = self.query(
+            "SELECT stock FROM products WHERE id = ?", (self.mug["id"],)
+        )["stock"]
+        self.assertEqual(product_stock, self.mug["stock"] - 2)
+
+    def test_cancelling_restores_the_option_stock(self):
+        before = self.glazes["Oatmeal"]["stock"]
+        self.login()
+        self.buy_mug("Oatmeal", quantity=2)
+        self.checkout()
+        order_id = self.query("SELECT id FROM orders ORDER BY id DESC")["id"]
+
+        self.logout()
+        self.login("admin@shopsphere.test", "Admin#12345")
+        self.client.post(
+            f"/admin/orders/{order_id}/status",
+            data={"status": "cancelled", "csrf_token": self.csrf("/admin/orders")},
+        )
+        after = self.query(
+            "SELECT stock FROM product_variants WHERE id = ?", (self.glazes["Oatmeal"]["id"],)
+        )["stock"]
+        self.assertEqual(after, before)
+
+    def test_retiring_an_unsold_option_deletes_it(self):
+        seller = self.seller_client()
+        seller.post(
+            f"/sell/products/{self.mug['id']}/options/{self.glazes['Deep sea']['id']}/delete",
+            data={"csrf_token": self._csrf(seller, f"/sell/products/{self.mug['id']}/edit")},
+        )
+        self.assertIsNone(
+            self.query(
+                "SELECT id FROM product_variants WHERE id = ?", (self.glazes["Deep sea"]["id"],)
+            )
+        )
+
+    def test_retiring_a_sold_option_keeps_it_for_history(self):
+        self.login()
+        self.buy_mug("Oatmeal")
+        self.checkout()
+        self.logout()
+
+        seller = self.seller_client()
+        seller.post(
+            f"/sell/products/{self.mug['id']}/options/{self.glazes['Oatmeal']['id']}/delete",
+            data={"csrf_token": self._csrf(seller, f"/sell/products/{self.mug['id']}/edit")},
+        )
+        kept = self.query(
+            "SELECT * FROM product_variants WHERE id = ?", (self.glazes["Oatmeal"]["id"],)
+        )
+        self.assertIsNotNone(kept)
+        self.assertEqual(kept["is_active"], 0)
+        self.assertNotIn("Oatmeal", self.client.get(f"/p/{self.mug['id']}").get_data(as_text=True))
+
+    def checkout(self):
+        return self.client.post(
+            "/orders/checkout",
+            data={
+                "ship_name": "Demo Shopper", "ship_address": "1 Test Street",
+                "ship_city": "Testville", "ship_postcode": "123456",
+                "ship_country": "Singapore",
+                "csrf_token": self.csrf("/orders/checkout"),
+            },
+        )
+
+    def seller_client(self):
+        client = self.app.test_client()
+        client.post(
+            "/auth/login",
+            data={
+                "email": "maya@shopsphere.test", "password": "Seller#12345",
+                "csrf_token": self._csrf(client, "/auth/login"),
+            },
+        )
+        return client
+
+    def _csrf(self, client, path):
+        html = client.get(path).get_data(as_text=True)
+        marker = 'name="csrf_token" value="'
+        start = html.index(marker) + len(marker)
+        return html[start : html.index('"', start)]
+
+
+class TestPersonalisation(VariantTestCase):
+    def test_field_is_offered(self):
+        body = self.client.get(f"/p/{self.mug['id']}").get_data(as_text=True)
+        self.assertIn("Name on the base", body)
+
+    def test_text_is_kept_on_the_line(self):
+        self.buy_mug("Oatmeal", text="For Ada")
+        self.assertIn("For Ada", self.client.get("/cart/").get_data(as_text=True))
+
+    def test_same_option_different_text_are_separate_lines(self):
+        self.buy_mug("Oatmeal", text="For Ada")
+        self.buy_mug("Oatmeal", text="For Ben")
+        self.assertEqual(len(self.cart_line_ids()), 2)
+
+    def test_text_is_truncated_to_the_limit(self):
+        self.buy_mug("Oatmeal", text="x" * 200)
+        line = self.client.get("/cart/").get_data(as_text=True)
+        self.assertIn("x" * 20, line)
+        self.assertNotIn("x" * 21, line)
+
+    def test_text_is_escaped(self):
+        self.buy_mug("Oatmeal", text="<script>alert(1)</script>")
+        self.assertNotIn(
+            "<script>alert(1)</script>", self.client.get("/cart/").get_data(as_text=True)
+        )
+
+    def test_required_personalisation_blocks_the_add(self):
+        with self.app.app_context():
+            from shop.db import get_db
+
+            db = get_db()
+            db.execute(
+                "UPDATE products SET personalisation_required = 1 WHERE id = ?",
+                (self.mug["id"],),
+            )
+            db.commit()
+        body = self.add_to_cart(
+            self.mug["id"], variant_id=self.glazes["Oatmeal"]["id"]
+        ).get_data(as_text=True)
+        self.assertIn("is required for this item", body)
+        self.assertIn("Your cart is empty", self.client.get("/cart/").get_data(as_text=True))
+
+    def test_text_reaches_the_order_and_the_email(self):
+        self.login()
+        self.buy_mug("Oatmeal", text="For Ada")
+        self.client.post(
+            "/orders/checkout",
+            data={
+                "ship_name": "Demo Shopper", "ship_address": "1 Test Street",
+                "ship_city": "Testville", "ship_postcode": "123456",
+                "ship_country": "Singapore",
+                "csrf_token": self.csrf("/orders/checkout"),
+            },
+        )
+        line = self.query("SELECT * FROM order_items ORDER BY id DESC")
+        self.assertEqual(line["personalisation"], "For Ada")
+
+
+class TestStoreSettings(ShopTestCase):
+    def setUp(self):
+        super().setUp()
+        self.login("admin@shopsphere.test", "Admin#12345")
+
+    def save(self, **overrides):
+        data = {
+            "STORE_NAME": "ShopSphere",
+            "STORE_TAGLINE": "Everything you need.",
+            "CURRENCY_SYMBOL": "$",
+            "HERO_HEADING": "Hello",
+            "HERO_SUBHEADING": "World",
+            "SHIPPING_FLAT_CENTS": "4.99",
+            "FREE_SHIPPING_THRESHOLD_CENTS": "50.00",
+            "TAX_RATE": "8",
+            "COMMISSION_RATE": "10",
+            "ALLOW_GUEST_CHECKOUT": "1",
+            "csrf_token": self.csrf("/admin/settings"),
+        }
+        data.update(overrides)
+        return self.client.post("/admin/settings", data=data, follow_redirects=True)
+
+    def test_store_name_change_shows_everywhere(self):
+        self.save(STORE_NAME="Craft Corner")
+        body = self.client.get("/").get_data(as_text=True)
+        self.assertIn("Craft Corner", body)
+
+    def test_currency_symbol_changes_prices(self):
+        self.save(CURRENCY_SYMBOL="S$")
+        self.assertIn("S$", self.client.get("/").get_data(as_text=True))
+
+    def test_hero_copy_is_editable(self):
+        self.save(HERO_HEADING="Handmade, honestly")
+        self.assertIn("Handmade, honestly", self.client.get("/").get_data(as_text=True))
+
+    def test_tax_change_affects_the_next_cart(self):
+        self.save(TAX_RATE="0")
+        self.add_to_cart(2, 1)
+        self.assertIn("<dd>$0.00</dd>", self.client.get("/cart/").get_data(as_text=True))
+
+    def test_shipping_threshold_is_respected(self):
+        self.save(FREE_SHIPPING_THRESHOLD_CENTS="10000")
+        self.add_to_cart(2, 1)  # $89.90, under the new threshold
+        self.assertIn("<dd>$4.99</dd>", self.client.get("/cart/").get_data(as_text=True))
+
+    def test_empty_store_name_is_refused(self):
+        body = self.save(STORE_NAME="").get_data(as_text=True)
+        self.assertIn("cannot be empty", body)
+        self.assertIn("ShopSphere", self.client.get("/").get_data(as_text=True))
+
+    def test_out_of_range_tax_is_refused(self):
+        self.save(TAX_RATE="900")
+        with self.app.app_context():
+            from shop import settings
+
+            self.assertLessEqual(settings.get("TAX_RATE"), 1)
+
+    def test_turning_off_guest_checkout_takes_effect(self):
+        self.save(ALLOW_GUEST_CHECKOUT="")
+        self.logout()
+        self.add_to_cart(2, 1)
+        response = self.client.get("/orders/checkout")
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/auth/login", response.headers["Location"])
+
+    def test_shopper_cannot_reach_settings(self):
+        self.logout()
+        self.login()
+        self.assertEqual(self.client.get("/admin/settings").status_code, 403)
+
+    def test_settings_fall_back_to_config(self):
+        with self.app.app_context():
+            from shop import settings
+
+            self.assertEqual(settings.get("STORE_NAME"), self.app.config["STORE_NAME"])
+
+
+class TestShopAppearance(ShopTestCase):
+    def setUp(self):
+        super().setUp()
+        self.login("maya@shopsphere.test", "Seller#12345")
+
+    def save(self, **overrides):
+        data = {
+            "bio": "Handmade stoneware.",
+            "accent": "emerald",
+            "shipping_policy": "Posted within three days.",
+            "returns_policy": "Fourteen days, unused.",
+            "csrf_token": self.csrf("/sell/appearance"),
+        }
+        data.update(overrides)
+        return self.client.post(
+            "/sell/appearance", data=data,
+            content_type="multipart/form-data", follow_redirects=True,
+        )
+
+    def test_accent_is_applied_to_the_storefront(self):
+        self.save()
+        body = self.client.get("/s/kiln-and-clay").get_data(as_text=True)
+        self.assertIn("shophead--emerald", body)
+
+    def test_unknown_accent_falls_back(self):
+        self.save(accent="; background: url(evil)")
+        accent = self.query("SELECT accent FROM sellers WHERE slug = 'kiln-and-clay'")["accent"]
+        self.assertEqual(accent, "indigo")
+
+    def test_policies_appear_on_the_storefront(self):
+        self.save()
+        body = self.client.get("/s/kiln-and-clay").get_data(as_text=True)
+        self.assertIn("Posted within three days.", body)
+        self.assertIn("Fourteen days, unused.", body)
+
+    def test_banner_upload_and_removal(self):
+        self.save(banner=(io.BytesIO(png_bytes((400, 120))), "banner.png"))
+        banner = self.query("SELECT banner FROM sellers WHERE slug = 'kiln-and-clay'")["banner"]
+        self.assertTrue(banner.endswith(".webp"))
+        self.assertIn(banner, self.client.get("/s/kiln-and-clay").get_data(as_text=True))
+
+        self.client.post(
+            "/sell/appearance/banner/delete",
+            data={"csrf_token": self.csrf("/sell/appearance")},
+        )
+        self.assertEqual(
+            self.query("SELECT banner FROM sellers WHERE slug = 'kiln-and-clay'")["banner"], ""
+        )
+
+    def test_policies_are_escaped(self):
+        self.save(shipping_policy="<script>alert(1)</script>")
+        self.assertNotIn(
+            "<script>alert(1)</script>", self.client.get("/s/kiln-and-clay").get_data(as_text=True)
+        )
+
+    def test_shopper_without_a_shop_cannot_reach_it(self):
+        self.logout()
+        self.login()
+        response = self.client.get("/sell/appearance")
+        self.assertEqual(response.status_code, 302)
+
+
+class TestTheme(ShopTestCase):
+    def test_default_has_no_theme_attribute(self):
+        body = self.client.get("/").get_data(as_text=True)
+        self.assertIn('<html lang="en">', body)
+
+    def test_toggling_to_dark_sets_the_attribute(self):
+        self.client.post(
+            "/theme", data={"theme": "dark", "next": "/", "csrf_token": self.csrf("/")}
+        )
+        self.assertIn('data-theme="dark"', self.client.get("/").get_data(as_text=True))
+
+    def test_toggling_back_to_light(self):
+        csrf = self.csrf("/")
+        self.client.post("/theme", data={"theme": "dark", "csrf_token": csrf})
+        self.client.post("/theme", data={"theme": "light", "csrf_token": csrf})
+        self.assertIn('data-theme="light"', self.client.get("/").get_data(as_text=True))
+
+    def test_unknown_theme_value_falls_back_to_light(self):
+        self.client.post(
+            "/theme",
+            data={"theme": "'; drop table users --", "csrf_token": self.csrf("/")},
+        )
+        self.assertIn('data-theme="light"', self.client.get("/").get_data(as_text=True))
+
+    def test_theme_toggle_cannot_be_used_as_an_open_redirect(self):
+        response = self.client.post(
+            "/theme",
+            data={
+                "theme": "dark",
+                "next": "https://evil.example.com/",
+                "csrf_token": self.csrf("/"),
+            },
+        )
+        self.assertNotIn("evil.example.com", response.headers["Location"])
 
 
 if __name__ == "__main__":

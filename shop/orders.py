@@ -20,10 +20,12 @@ from flask import (
     url_for,
 )
 
+from . import settings
 from .cart import cart_summary, clear_cart
 from .db import get_db
 from .mail import order_confirmation, send_email
 from .security import get_throttle, login_required
+from .variants import refresh_product_stock
 
 bp = Blueprint("orders", __name__, url_prefix="/orders")
 
@@ -64,15 +66,22 @@ def advance_status(order_id: int, target: str) -> str | None:
     try:
         if target == "cancelled":
             items = db.execute(
-                "SELECT product_id, quantity FROM order_items"
+                "SELECT product_id, variant_id, quantity FROM order_items"
                 " WHERE order_id = ? AND product_id IS NOT NULL",
                 (order_id,),
             ).fetchall()
             for item in items:
-                db.execute(
-                    "UPDATE products SET stock = stock + ? WHERE id = ?",
-                    (item["quantity"], item["product_id"]),
-                )
+                if item["variant_id"] is not None:
+                    db.execute(
+                        "UPDATE product_variants SET stock = stock + ? WHERE id = ?",
+                        (item["quantity"], item["variant_id"]),
+                    )
+                    refresh_product_stock(db, item["product_id"])
+                else:
+                    db.execute(
+                        "UPDATE products SET stock = stock + ? WHERE id = ?",
+                        (item["quantity"], item["product_id"]),
+                    )
         db.execute("UPDATE orders SET status = ? WHERE id = ?", (target, order_id))
         db.commit()
     except sqlite3.Error:
@@ -93,7 +102,7 @@ def _commission_for(seller_id: int | None, line_cents: int) -> tuple[float, int]
     seller = get_db().execute(
         "SELECT commission_rate FROM sellers WHERE id = ?", (seller_id,)
     ).fetchone()
-    rate = seller["commission_rate"] if seller else current_app.config["COMMISSION_RATE"]
+    rate = seller["commission_rate"] if seller else settings.get("COMMISSION_RATE")
     return rate, min(line_cents, round(line_cents * rate))
 
 
@@ -118,7 +127,7 @@ def _read_email() -> tuple[str, list[str]]:
 
 @bp.route("/checkout", methods=("GET", "POST"))
 def checkout():
-    guests_allowed = current_app.config["ALLOW_GUEST_CHECKOUT"]
+    guests_allowed = settings.get("ALLOW_GUEST_CHECKOUT")
     if g.user is None and not guests_allowed:
         flash("Please sign in to check out.", "info")
         return redirect(url_for("auth.login", next=url_for("orders.checkout")))
@@ -186,29 +195,45 @@ def _place_order(summary: dict, address: dict, email: str) -> str | None:
         order_id = int(cursor.lastrowid)
 
         for item in summary["items"]:
-            product, quantity = item["product"], item["quantity"]
+            product, variant, quantity = item["product"], item["variant"], item["quantity"]
+            name = product["name"]
+
             # Guarded update: fails rather than overselling if stock moved underneath us.
-            updated = db.execute(
-                "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
-                (quantity, product["id"], quantity),
-            )
-            if updated.rowcount != 1:
-                raise ValueError(product["name"])
+            if variant is not None:
+                updated = db.execute(
+                    "UPDATE product_variants SET stock = stock - ?"
+                    " WHERE id = ? AND stock >= ?",
+                    (quantity, variant["id"], quantity),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError(f"{name} ({variant['label']})")
+                refresh_product_stock(db, product["id"])
+            else:
+                updated = db.execute(
+                    "UPDATE products SET stock = stock - ? WHERE id = ? AND stock >= ?",
+                    (quantity, product["id"], quantity),
+                )
+                if updated.rowcount != 1:
+                    raise ValueError(name)
 
             # Freeze the split now; a later rate change must not rewrite history.
             rate, commission = _commission_for(product["seller_id"], item["line_cents"])
             db.execute(
                 "INSERT INTO order_items"
-                " (order_id, product_id, seller_id, name, icon, unit_cents, quantity,"
-                "  line_cents, commission_rate, commission_cents, seller_earning_cents)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " (order_id, product_id, variant_id, seller_id, name, variant_label,"
+                "  personalisation, icon, unit_cents, quantity, line_cents,"
+                "  commission_rate, commission_cents, seller_earning_cents)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     order_id,
                     product["id"],
+                    variant["id"] if variant else None,
                     product["seller_id"],
-                    product["name"],
+                    name,
+                    variant["label"] if variant else "",
+                    item["text"],
                     product["icon"],
-                    product["price_cents"],
+                    item["unit_cents"],
                     quantity,
                     item["line_cents"],
                     rate,

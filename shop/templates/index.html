@@ -12,10 +12,8 @@
   <section class="hero">
     <div class="hero__copy">
       <p class="hero__kicker">New season, {{ total }} products in stock</p>
-      <h1>Everything you need,<br>one cart away.</h1>
-      <p class="hero__lede">
-        Electronics, fashion, groceries, pet gear and more &mdash; shipped free over $50.
-      </p>
+      <h1>{{ setting('HERO_HEADING') }}</h1>
+      <p class="hero__lede">{{ setting('HERO_SUBHEADING') }}</p>
       <a class="btn btn--primary btn--lg" href="#catalogue">Start shopping</a>
     </div>
     <ul class="hero__tiles">

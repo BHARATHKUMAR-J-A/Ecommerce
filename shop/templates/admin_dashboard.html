@@ -5,6 +5,7 @@
 <div class="adminhead">
   <h1>Store dashboard</h1>
   <div class="adminhead__actions">
+    <a href="{{ url_for('admin.store_settings') }}">Settings</a>
     <a href="{{ url_for('admin.sellers') }}">
       Sellers{% if stats.pending_sellers %} <span class="badge">{{ stats.pending_sellers }}</span>{% endif %}
     </a>

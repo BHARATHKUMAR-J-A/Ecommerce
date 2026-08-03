@@ -6,6 +6,7 @@ import sqlite3
 
 from flask import Blueprint, abort, flash, redirect, render_template, request, url_for
 
+from . import settings
 from .db import get_db
 from .orders import STATUS_TRANSITIONS, advance_status
 from .products import read_product_fields
@@ -160,6 +161,24 @@ def orders():
         " GROUP BY o.id ORDER BY o.id DESC"
     ).fetchall()
     return render_template("admin_orders.html", orders=rows, transitions=STATUS_TRANSITIONS)
+
+
+@bp.route("/settings", methods=("GET", "POST"))
+@admin_required
+def store_settings():
+    if request.method == "POST":
+        values = {name: request.form.get(name, "") for name in settings.EDITABLE}
+        # Unticked checkboxes are simply absent from a form post, so make the
+        # boolean explicit rather than letting "missing" mean "unchanged".
+        values["ALLOW_GUEST_CHECKOUT"] = "1" if request.form.get("ALLOW_GUEST_CHECKOUT") else ""
+        errors = settings.save(values)
+        for message in errors:
+            flash(message, "error")
+        if not errors:
+            flash("Store settings saved.", "success")
+            return redirect(url_for("admin.store_settings"))
+
+    return render_template("admin_settings.html", current=settings.get)
 
 
 @bp.post("/orders/<int:order_id>/status")

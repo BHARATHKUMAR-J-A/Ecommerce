@@ -8,6 +8,7 @@ import random
 from werkzeug.security import generate_password_hash
 
 from .db import get_db
+from .variants import refresh_product_stock
 
 DEMO_ADMIN_PASSWORD = "Admin#12345"
 DEMO_SHOPPER_PASSWORD = "Demo#12345"
@@ -255,6 +256,51 @@ def _seed_sellers(db, category_ids: dict) -> None:
         " category_id, seller_id, icon) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         listings,
     )
+    _seed_options(db)
+
+
+def _seed_options(db) -> None:
+    """Give two demo listings real variants and one a personalisation field."""
+    def product_id(name: str):
+        row = db.execute("SELECT id FROM products WHERE name = ?", (name,)).fetchone()
+        return row["id"] if row else None
+
+    mug = product_id("Speckled Stoneware Mug")
+    if mug is not None:
+        db.execute(
+            "UPDATE products SET option_label = 'Glaze',"
+            " personalisation_label = 'Name on the base', personalisation_max = 20"
+            " WHERE id = ?",
+            (mug,),
+        )
+        db.executemany(
+            "INSERT INTO product_variants (product_id, label, price_cents, stock, position)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [
+                (mug, "Oatmeal", None, 6, 0),
+                (mug, "Deep sea", None, 5, 1),
+                (mug, "Copper red", 3800, 3, 2),
+            ],
+        )
+        refresh_product_stock(db, mug)
+
+    board = product_id("Walnut Chopping Board")
+    if board is not None:
+        db.execute(
+            "UPDATE products SET option_label = 'Size',"
+            " personalisation_label = 'Engraving', personalisation_max = 30"
+            " WHERE id = ?",
+            (board,),
+        )
+        db.executemany(
+            "INSERT INTO product_variants (product_id, label, price_cents, stock, position)"
+            " VALUES (?, ?, ?, ?, ?)",
+            [
+                (board, 'Small (30 x 20 cm)', 6900, 4, 0),
+                (board, 'Large (40 x 28 cm)', 8900, 5, 1),
+            ],
+        )
+        refresh_product_stock(db, board)
 
 
 def _split_rating(target: float, count: int) -> list[int]:

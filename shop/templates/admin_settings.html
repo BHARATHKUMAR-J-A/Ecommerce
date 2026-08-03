@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Store settings &middot; Admin{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>Store settings</h1>
+  <a href="{{ url_for('admin.dashboard') }}">&larr; Dashboard</a>
+</div>
+
+<div class="cartlayout">
+  <section class="panel">
+    <form method="post" class="stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <h2>Identity</h2>
+
+      <label for="STORE_NAME">Store name</label>
+      <input id="STORE_NAME" name="STORE_NAME" value="{{ current('STORE_NAME') }}"
+             maxlength="120" required>
+
+      <label for="STORE_TAGLINE">Tagline</label>
+      <input id="STORE_TAGLINE" name="STORE_TAGLINE" value="{{ current('STORE_TAGLINE') }}"
+             maxlength="120">
+
+      <label for="CURRENCY_SYMBOL">Currency symbol</label>
+      <input id="CURRENCY_SYMBOL" name="CURRENCY_SYMBOL"
+             value="{{ current('CURRENCY_SYMBOL') }}" maxlength="4" required>
+
+      <h2>Home page</h2>
+
+      <label for="HERO_HEADING">Hero heading</label>
+      <input id="HERO_HEADING" name="HERO_HEADING" value="{{ current('HERO_HEADING') }}"
+             maxlength="120">
+
+      <label for="HERO_SUBHEADING">Hero subheading</label>
+      <input id="HERO_SUBHEADING" name="HERO_SUBHEADING"
+             value="{{ current('HERO_SUBHEADING') }}" maxlength="120">
+
+      <h2>Money</h2>
+
+      <div class="row">
+        <div>
+          <label for="SHIPPING_FLAT_CENTS">Flat shipping ({{ current('CURRENCY_SYMBOL') }})</label>
+          <input id="SHIPPING_FLAT_CENTS" name="SHIPPING_FLAT_CENTS" type="text"
+                 inputmode="decimal"
+                 value="{{ '%.2f'|format(current('SHIPPING_FLAT_CENTS') / 100) }}">
+        </div>
+        <div>
+          <label for="FREE_SHIPPING_THRESHOLD_CENTS">Free over ({{ current('CURRENCY_SYMBOL') }})</label>
+          <input id="FREE_SHIPPING_THRESHOLD_CENTS" name="FREE_SHIPPING_THRESHOLD_CENTS"
+                 type="text" inputmode="decimal"
+                 value="{{ '%.2f'|format(current('FREE_SHIPPING_THRESHOLD_CENTS') / 100) }}">
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="TAX_RATE">Tax rate (%)</label>
+          <input id="TAX_RATE" name="TAX_RATE" type="number" step="0.01" min="0" max="100"
+                 value="{{ (current('TAX_RATE') * 100)|round(2) }}">
+        </div>
+        <div>
+          <label for="COMMISSION_RATE">Default seller commission (%)</label>
+          <input id="COMMISSION_RATE" name="COMMISSION_RATE" type="number" step="0.5"
+                 min="0" max="100" value="{{ (current('COMMISSION_RATE') * 100)|round(2) }}">
+        </div>
+      </div>
+
+      <h2>Checkout</h2>
+
+      <label class="check">
+        <input type="checkbox" name="ALLOW_GUEST_CHECKOUT" value="1"
+               {% if current('ALLOW_GUEST_CHECKOUT') %}checked{% endif %}>
+        Let people check out without an account
+      </label>
+
+      <button type="submit" class="btn btn--primary btn--lg">Save settings</button>
+    </form>
+  </section>
+
+  <aside class="panel">
+    <h2>How these work</h2>
+    <p class="small muted">
+      These live in the database and take effect immediately &mdash; no restart, no
+      code edit. Anything left at its default falls back to <code>config.py</code>.
+    </p>
+    <p class="small muted">
+      Changing the default commission only affects sellers approved from now on, and
+      only their future sales. Existing sellers keep the rate on their record, which
+      you can change on the
+      <a href="{{ url_for('admin.sellers') }}">sellers page</a>.
+    </p>
+    <p class="small muted">
+      Shipping and tax are applied at checkout, so changing them here changes what
+      the next customer pays but never rewrites an order already placed.
+    </p>
+  </aside>
+</div>
+{% endblock %}

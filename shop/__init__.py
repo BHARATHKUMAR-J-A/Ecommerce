@@ -9,6 +9,7 @@ from flask import Flask, g, render_template, request, session
 from werkzeug.exceptions import HTTPException
 
 from . import db
+from . import settings
 from .config import Config, load_secret_key
 from .security import apply_security_headers, csrf_token, verify_csrf
 
@@ -87,8 +88,10 @@ def _register_hooks(app: Flask) -> None:
             "nav_categories": db.get_db()
             .execute("SELECT slug, name, icon FROM categories ORDER BY name")
             .fetchall(),
-            "store_name": app.config["STORE_NAME"],
-            "store_tagline": app.config["STORE_TAGLINE"],
+            "store_name": settings.get("STORE_NAME"),
+            "store_tagline": settings.get("STORE_TAGLINE"),
+            "setting": settings.get,
+            "theme": request.cookies.get("theme", ""),
             "seller_account": _seller_for_nav(),
         }
 
@@ -123,7 +126,7 @@ def _register_template_helpers(app: Flask) -> None:
 
     @app.template_filter("money")
     def money(cents: int | None) -> str:
-        return f"{app.config['CURRENCY_SYMBOL']}{(cents or 0) / 100:,.2f}"
+        return f"{settings.get('CURRENCY_SYMBOL')}{(cents or 0) / 100:,.2f}"
 
     @app.template_filter("stars")
     def stars(rating: float) -> str:

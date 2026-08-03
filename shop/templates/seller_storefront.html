@@ -3,13 +3,30 @@
 {% block title %}{{ seller.shop_name }} &middot; {{ store_name }}{% endblock %}
 
 {% block content %}
-<section class="shophead">
-  <h1>{{ seller.shop_name }}</h1>
-  {% if seller.bio %}<p class="shophead__bio">{{ seller.bio }}</p>{% endif %}
-  <p class="muted small">
-    An independent seller on {{ store_name }} since {{ seller.created_at[:10] }}.
-  </p>
+<section class="shophead shophead--{{ seller.accent }}">
+  {% if seller.banner %}
+    <img class="shophead__banner" alt=""
+         src="{{ url_for('sellers.media', filename=seller.banner) }}">
+  {% endif %}
+  <div class="shophead__text">
+    <h1>{{ seller.shop_name }}</h1>
+    {% if seller.bio %}<p class="shophead__bio">{{ seller.bio }}</p>{% endif %}
+    <p class="muted small">
+      An independent seller on {{ store_name }} since {{ seller.created_at[:10] }}.
+    </p>
+  </div>
 </section>
+
+{% if seller.shipping_policy or seller.returns_policy %}
+  <section class="policies">
+    {% if seller.shipping_policy %}
+      <div><h2>Shipping</h2><p>{{ seller.shipping_policy }}</p></div>
+    {% endif %}
+    {% if seller.returns_policy %}
+      <div><h2>Returns</h2><p>{{ seller.returns_policy }}</p></div>
+    {% endif %}
+  </section>
+{% endif %}
 
 <section class="listing">
   <h2>{{ products|length }} listing{{ '' if products|length == 1 else 's' }}</h2>

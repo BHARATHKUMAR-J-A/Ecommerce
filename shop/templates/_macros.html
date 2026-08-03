@@ -1,16 +1,23 @@
 {% macro add_to_cart(product, next_url='', compact=false) %}
-  <form action="{{ url_for('cart.add', product_id=product.id) }}" method="post" class="addform">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="hidden" name="next" value="{{ next_url }}">
-    {% if not compact %}
-      <label class="sr-only" for="qty-{{ product.id }}">Quantity</label>
-      <input id="qty-{{ product.id }}" class="qty" type="number" name="quantity"
-             value="1" min="1" max="{{ product.stock if product.stock < 20 else 20 }}">
-    {% endif %}
-    <button type="submit" class="btn btn--primary" {% if product.stock <= 0 %}disabled{% endif %}>
-      {{ 'Out of stock' if product.stock <= 0 else 'Add to cart' }}
-    </button>
-  </form>
+  {% if product.option_count or product.personalisation_label %}
+    {# Needs a choice, so send them to the page rather than guessing one. #}
+    <a class="btn btn--primary" href="{{ url_for('catalog.product', product_id=product.id) }}">
+      {{ 'Sold out' if product.stock <= 0 else 'Choose options' }}
+    </a>
+  {% else %}
+    <form action="{{ url_for('cart.add', product_id=product.id) }}" method="post" class="addform">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      {% if not compact %}
+        <label class="sr-only" for="qty-{{ product.id }}">Quantity</label>
+        <input id="qty-{{ product.id }}" class="qty" type="number" name="quantity"
+               value="1" min="1" max="{{ product.stock if product.stock < 20 else 20 }}">
+      {% endif %}
+      <button type="submit" class="btn btn--primary" {% if product.stock <= 0 %}disabled{% endif %}>
+        {{ 'Out of stock' if product.stock <= 0 else 'Add to cart' }}
+      </button>
+    </form>
+  {% endif %}
 {% endmacro %}
 
 

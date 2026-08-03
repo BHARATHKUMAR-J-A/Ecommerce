@@ -15,21 +15,27 @@
           </a>
           <div class="line__info">
             <h2><a href="{{ url_for('catalog.product', product_id=p.id) }}">{{ p.name }}</a></h2>
-            <p class="muted">{{ p.sku }} &middot; {{ p.price_cents|money }} each</p>
+            {% if item.variant %}
+              <p class="linemeta">{{ p.option_label or 'Option' }}: <strong>{{ item.variant.label }}</strong></p>
+            {% endif %}
+            {% if item.text %}
+              <p class="linemeta">{{ p.personalisation_label }}: <strong>{{ item.text }}</strong></p>
+            {% endif %}
+            <p class="muted">{{ item.unit_cents|money }} each</p>
             {% if item.capped %}
               <p class="muted warn">Reduced to {{ item.quantity }} &mdash; that is all we have left.</p>
             {% endif %}
           </div>
-          <form class="line__qty" action="{{ url_for('cart.update', product_id=p.id) }}" method="post">
+          <form class="line__qty" action="{{ url_for('cart.update', line_id=item.line_id) }}" method="post">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-            <label class="sr-only" for="line-{{ p.id }}">Quantity for {{ p.name }}</label>
-            <input id="line-{{ p.id }}" class="qty" type="number" name="quantity"
-                   value="{{ item.quantity }}" min="0" max="{{ p.stock }}" data-autosubmit>
+            <label class="sr-only" for="line-{{ item.line_id }}">Quantity for {{ p.name }}</label>
+            <input id="line-{{ item.line_id }}" class="qty" type="number" name="quantity"
+                   value="{{ item.quantity }}" min="0" max="{{ item.available }}" data-autosubmit>
             <button type="submit" class="btn btn--ghost btn--sm">Update</button>
           </form>
           <div class="line__total">
             <strong>{{ item.line_cents|money }}</strong>
-            <form action="{{ url_for('cart.remove', product_id=p.id) }}" method="post">
+            <form action="{{ url_for('cart.remove', line_id=item.line_id) }}" method="post">
               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <button type="submit" class="linklike danger">Remove</button>
             </form>

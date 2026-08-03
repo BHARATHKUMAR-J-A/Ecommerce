@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Shop appearance &middot; {{ seller.shop_name }}{% endblock %}
+
+{% block content %}
+<div class="adminhead">
+  <h1>Shop appearance</h1>
+  <div class="adminhead__actions">
+    <a href="{{ url_for('sellers.dashboard') }}">&larr; Dashboard</a>
+    <a href="{{ url_for('sellers.storefront', slug=seller.slug) }}">View your shop</a>
+  </div>
+</div>
+
+<div class="cartlayout">
+  <section class="panel">
+    <form method="post" class="stack" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label for="bio">About your shop</label>
+      <textarea id="bio" name="bio" rows="3" maxlength="1000">{{ seller.bio }}</textarea>
+
+      <label for="banner">Banner image</label>
+      <input id="banner" name="banner" type="file" accept="image/*">
+      <p class="hint">Wide images work best. Re-encoded on upload like every other photo.</p>
+
+      <fieldset class="options options--swatches">
+        <legend>Accent colour</legend>
+        {% for name in accents %}
+          <label class="swatch swatch--{{ name }}">
+            <input type="radio" name="accent" value="{{ name }}"
+                   {% if seller.accent == name %}checked{% endif %}>
+            <span class="swatch__dot" aria-hidden="true"></span>
+            <span class="swatch__name">{{ name|capitalize }}</span>
+          </label>
+        {% endfor %}
+      </fieldset>
+
+      <label for="shipping_policy">Shipping policy</label>
+      <textarea id="shipping_policy" name="shipping_policy" rows="3"
+                maxlength="1000">{{ seller.shipping_policy }}</textarea>
+
+      <label for="returns_policy">Returns policy</label>
+      <textarea id="returns_policy" name="returns_policy" rows="3"
+                maxlength="1000">{{ seller.returns_policy }}</textarea>
+
+      <button type="submit" class="btn btn--primary btn--lg">Save appearance</button>
+    </form>
+  </section>
+
+  <aside class="panel">
+    <h2>Current banner</h2>
+    {% if seller.banner %}
+      <img class="bannerpreview" alt="Your shop banner"
+           src="{{ url_for('sellers.media', filename=seller.banner) }}">
+      <form action="{{ url_for('sellers.delete_banner') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="linklike danger">Remove banner</button>
+      </form>
+    {% else %}
+      <p class="muted">No banner yet. Without one your shop shows the accent colour.</p>
+    {% endif %}
+
+    <h2>Why a fixed palette?</h2>
+    <p class="small muted">
+      Each accent is a CSS class rather than a colour you type in. That keeps the
+      Content-Security-Policy strict &mdash; arbitrary colours would need inline
+      styles, which the shop deliberately does not allow.
+    </p>
+  </aside>
+</div>
+{% endblock %}

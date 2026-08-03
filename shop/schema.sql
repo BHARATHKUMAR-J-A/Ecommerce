@@ -6,16 +6,25 @@ DROP TABLE IF EXISTS reviews;
 DROP TABLE IF EXISTS password_resets;
 DROP TABLE IF EXISTS order_items;
 DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS product_variants;
 DROP TABLE IF EXISTS product_images;
 DROP TABLE IF EXISTS products_fts;
 DROP TABLE IF EXISTS products;
 DROP TABLE IF EXISTS sellers;
 DROP TABLE IF EXISTS categories;
 DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS settings;
 DROP TABLE IF EXISTS schema_meta;
 
 CREATE TABLE schema_meta (
     version INTEGER NOT NULL
+);
+
+-- Store-wide settings the admin can edit without touching config.py. Anything
+-- missing here falls back to the class in config.py.
+CREATE TABLE settings (
+    key   TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE users (
@@ -61,6 +70,10 @@ CREATE TABLE sellers (
     status          TEXT    NOT NULL DEFAULT 'pending'
                             CHECK (status IN ('pending', 'approved', 'rejected', 'suspended')),
     commission_rate REAL    NOT NULL DEFAULT 0.10 CHECK (commission_rate BETWEEN 0 AND 1),
+    banner          TEXT    NOT NULL DEFAULT '',
+    accent          TEXT    NOT NULL DEFAULT 'indigo',
+    shipping_policy TEXT    NOT NULL DEFAULT '',
+    returns_policy  TEXT    NOT NULL DEFAULT '',
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     reviewed_at     TEXT
 );
@@ -69,6 +82,8 @@ CREATE INDEX idx_sellers_status ON sellers (status);
 
 -- rating and review_count are caches of the reviews table, refreshed by
 -- shop.reviews.refresh_product_rating. seller_id NULL means the shop's own stock.
+-- When a product has variants, stock is the sum of theirs, kept by
+-- shop.variants.refresh_product_stock so existing stock queries still work.
 CREATE TABLE products (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     sku          TEXT    NOT NULL UNIQUE,
@@ -81,6 +96,10 @@ CREATE TABLE products (
     icon         TEXT    NOT NULL DEFAULT '.',
     rating       REAL    NOT NULL DEFAULT 0 CHECK (rating BETWEEN 0 AND 5),
     review_count INTEGER NOT NULL DEFAULT 0,
+    option_label TEXT    NOT NULL DEFAULT '',
+    personalisation_label    TEXT    NOT NULL DEFAULT '',
+    personalisation_max      INTEGER NOT NULL DEFAULT 60,
+    personalisation_required INTEGER NOT NULL DEFAULT 0,
     is_active    INTEGER NOT NULL DEFAULT 1,
     created_at   TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -88,6 +107,21 @@ CREATE TABLE products (
 CREATE INDEX idx_products_category ON products (category_id);
 CREATE INDEX idx_products_active ON products (is_active);
 CREATE INDEX idx_products_seller ON products (seller_id);
+
+-- One row per buyable variation, e.g. a glaze or a size. price_cents NULL means
+-- "same as the product", so a seller only fills it in where it actually differs.
+CREATE TABLE product_variants (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_id  INTEGER NOT NULL REFERENCES products (id) ON DELETE CASCADE,
+    label       TEXT    NOT NULL,
+    price_cents INTEGER CHECK (price_cents IS NULL OR price_cents >= 0),
+    stock       INTEGER NOT NULL DEFAULT 0 CHECK (stock >= 0),
+    position    INTEGER NOT NULL DEFAULT 0,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (product_id, label)
+);
+
+CREATE INDEX idx_product_variants_product ON product_variants (product_id, position);
 
 -- Uploaded photos. filename is a generated hex name; the original is never used.
 CREATE TABLE product_images (
@@ -180,8 +214,11 @@ CREATE TABLE order_items (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id             INTEGER NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
     product_id           INTEGER REFERENCES products (id) ON DELETE SET NULL,
+    variant_id           INTEGER REFERENCES product_variants (id) ON DELETE SET NULL,
     seller_id            INTEGER REFERENCES sellers (id) ON DELETE SET NULL,
     name                 TEXT    NOT NULL,
+    variant_label        TEXT    NOT NULL DEFAULT '',
+    personalisation      TEXT    NOT NULL DEFAULT '',
     icon                 TEXT    NOT NULL DEFAULT '.',
     unit_cents           INTEGER NOT NULL CHECK (unit_cents >= 0),
     quantity             INTEGER NOT NULL CHECK (quantity > 0),

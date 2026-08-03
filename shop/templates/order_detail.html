@@ -27,8 +27,10 @@
         <li>
           <span class="line__media" aria-hidden="true">{{ item.icon }}</span>
           <span>
-            <strong>{{ item.name }}</strong><br>
-            <span class="muted">{{ item.quantity }} &times; {{ item.unit_cents|money }}</span>
+            <strong>{{ item.name }}</strong>
+            {% if item.variant_label %}<br><span class="muted">{{ item.variant_label }}</span>{% endif %}
+            {% if item.personalisation %}<br><span class="muted">&ldquo;{{ item.personalisation }}&rdquo;</span>{% endif %}
+            <br><span class="muted">{{ item.quantity }} &times; {{ item.unit_cents|money }}</span>
           </span>
           <strong>{{ item.line_cents|money }}</strong>
         </li>

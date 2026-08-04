@@ -1,6 +1,6 @@
 # ShopSphere
 
-[![CI](https://github.com/yongjunmun/ShopSphere/actions/workflows/ci.yml/badge.svg)](https://github.com/yongjunmun/ShopSphere/actions/workflows/ci.yml)
+[![CI](https://github.com/yongjunmun/E-Commerce-Website/actions/workflows/ci.yml/badge.svg)](https://github.com/yongjunmun/E-Commerce-Website/actions/workflows/ci.yml)
 
 A complete e-commerce marketplace: browse a catalogue across 10 categories, search
 and filter it, fill a cart, check out, and manage stock from an admin area.
@@ -12,8 +12,8 @@ Flask + SQLite + server-rendered HTML. No Node, no build step, two dependencies.
 ## Run it
 
 ```powershell
-git clone https://github.com/yongjunmun/ShopSphere.git
-cd ShopSphere
+git clone https://github.com/yongjunmun/E-Commerce-Website.git
+cd E-Commerce-Website
 pip install -r requirements.txt
 python run.py
 ```
